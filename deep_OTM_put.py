@@ -7,7 +7,7 @@ import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-st.set_page_config(page_title="Browne Portfolio Put Option Advisor, Educational Only", layout="wide")
+st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
 
 # Black-Scholes for Put Option Pricing
 def black_scholes_put(S, K, T, r, sigma):
@@ -58,8 +58,8 @@ IV_SELL_THRESHOLD = 0.6
 DAYS_AFTER_EXPIRY_RELAXED = 7
 
 # Title and description
-st.title("📊 Browne Portfolio Put Option Advisor")
-st.markdown("### Tail Risk Hedging Strategy Recommendation System")
+st.title("📊 Browne Portfolio with an Hedge")
+st.markdown("### Tail Risk Hedging Strategy Recommendation System (Educational Only)")
 st.markdown("---")
 
 # Sidebar for user inputs
