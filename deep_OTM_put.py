@@ -7,7 +7,7 @@ import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
+st.set_page_config(page_title="Browne Portfolio Put Option Advisor, Educational Only", layout="wide")
 
 # Black-Scholes for Put Option Pricing
 def black_scholes_put(S, K, T, r, sigma):
