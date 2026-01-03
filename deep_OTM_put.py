@@ -6,188 +6,8 @@ from scipy.stats import norm
 import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import json
-import os
-import hashlib
-import re
 
 st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
-
-# File-based user database (for simple deployment)
-USER_DB_FILE = "users.json"
-POSITION_DB_FILE = "positions.json"
-
-# Email configuration (set these as environment variables or Streamlit secrets)
-EMAIL_CONFIG = {
-    'smtp_server': st.secrets.get("SMTP_SERVER", "smtp.gmail.com"),
-    'smtp_port': st.secrets.get("SMTP_PORT", 587),
-    'email_address': st.secrets.get("EMAIL_ADDRESS", "your_email@gmail.com"),
-    'email_password': st.secrets.get("EMAIL_PASSWORD", "your_app_password")
-}
-
-# Initialize session state
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'user_email' not in st.session_state:
-    st.session_state.user_email = None
-if 'user_preferences' not in st.session_state:
-    st.session_state.user_preferences = {}
-
-# Helper functions for user management
-def load_users():
-    """Load users from JSON file"""
-    if os.path.exists(USER_DB_FILE):
-        with open(USER_DB_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_users(users):
-    """Save users to JSON file"""
-    with open(USER_DB_FILE, 'w') as f:
-        json.dump(users, f, indent=2)
-
-def load_positions():
-    """Load user positions from JSON file"""
-    if os.path.exists(POSITION_DB_FILE):
-        with open(POSITION_DB_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_positions(positions):
-    """Save user positions to JSON file"""
-    with open(POSITION_DB_FILE, 'w') as f:
-        json.dump(positions, f, indent=2)
-
-def hash_password(password):
-    """Hash password using SHA256"""
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def validate_email(email):
-    """Validate email format"""
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
-
-def send_email_notification(to_email, subject, body):
-    """Send email notification"""
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_CONFIG['email_address']
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        
-        msg.attach(MIMEText(body, 'html'))
-        
-        server = smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'])
-        server.starttls()
-        server.login(EMAIL_CONFIG['email_address'], EMAIL_CONFIG['email_password'])
-        
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Failed to send email: {e}")
-        return False
-
-def create_recommendation_email(user_email, recommendation_type, data):
-    """Create HTML email with trading recommendation"""
-    
-    if recommendation_type == "BUY":
-        subject = "🟢 BUY Signal - Browne Portfolio Put Option"
-        body = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif;">
-            <h2 style="color: #28a745;">🟢 BUY RECOMMENDATION</h2>
-            <p>Hello,</p>
-            <p>Based on current market conditions, we recommend <strong>BUYING</strong> put options:</p>
-            
-            <table style="border-collapse: collapse; width: 100%; margin: 20px 0;">
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Current SPY Price</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">${data['spy']:.2f}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>VIX</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">{data['vix']:.2f}</td>
-                </tr>
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Adjusted IV</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">{data['adj_iv']:.1f}%</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Recommended Strike (20% OTM)</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">${data['strike']:.2f}</td>
-                </tr>
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Estimated Put Price</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">${data['put_price']:.2f}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Reason</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">{data['reason']}</td>
-                </tr>
-            </table>
-            
-            <p><a href="http://your-app-url.com" style="background-color: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Open App</a></p>
-            
-            <p style="color: #666; font-size: 12px; margin-top: 30px;">
-                This is an automated notification. Not financial advice.
-            </p>
-        </body>
-        </html>
-        """
-    else:  # SELL
-        subject = "🔴 SELL Signal - Browne Portfolio Put Option"
-        body = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif;">
-            <h2 style="color: #dc3545;">🔴 SELL RECOMMENDATION</h2>
-            <p>Hello,</p>
-            <p>Based on current market conditions, we recommend <strong>SELLING</strong> your put options:</p>
-            
-            <table style="border-collapse: collapse; width: 100%; margin: 20px 0;">
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Current SPY Price</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">${data['spy']:.2f}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>VIX</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">{data['vix']:.2f}</td>
-                </tr>
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Adjusted IV</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">{data['adj_iv']:.1f}%</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Current Put Price</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">${data['current_price']:.2f}</td>
-                </tr>
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Entry Price</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">${data['entry_price']:.2f}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit/Loss</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd; color: {'green' if data['pl'] > 0 else 'red'};">${data['pl']:+.2f} ({data['pl_pct']:+.1f}%)</td>
-                </tr>
-                <tr style="background-color: #f2f2f2;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Reason</strong></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;">Volatility spike - Adj IV ≥ 60%</td>
-                </tr>
-            </table>
-            
-            <p><a href="http://your-app-url.com" style="background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Open App</a></p>
-            
-            <p style="color: #666; font-size: 12px; margin-top: 30px;">
-                This is an automated notification. Not financial advice.
-            </p>
-        </body>
-        </html>
-        """
-    
-    return subject, body
 
 # Black-Scholes for Put Option Pricing
 def black_scholes_put(S, K, T, r, sigma):
@@ -237,471 +57,713 @@ IV_BUY_THRESHOLD_RELAXED = 0.4
 IV_SELL_THRESHOLD = 0.6
 DAYS_AFTER_EXPIRY_RELAXED = 7
 
-# Login/Registration UI
-def show_auth_page():
-    st.title("🔐 Browne Portfolio Put Option Advisor")
-    st.markdown("### Please login or register to continue")
-    
-    tab1, tab2 = st.tabs(["Login", "Register"])
-    
-    with tab1:
-        st.markdown("#### Login to Your Account")
-        with st.form("login_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Login")
-            
-            if submit:
-                if not email or not password:
-                    st.error("Please enter both email and password")
-                else:
-                    users = load_users()
-                    if email in users and users[email]['password'] == hash_password(password):
-                        st.session_state.logged_in = True
-                        st.session_state.user_email = email
-                        st.session_state.user_preferences = users[email].get('preferences', {})
-                        st.success("Login successful!")
-                        st.rerun()
-                    else:
-                        st.error("Invalid email or password")
-    
-    with tab2:
-        st.markdown("#### Create New Account")
-        with st.form("register_form"):
-            new_email = st.text_input("Email")
-            new_password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            email_notifications = st.checkbox("Enable email notifications", value=True)
-            submit_register = st.form_submit_button("Register")
-            
-            if submit_register:
-                if not new_email or not new_password:
-                    st.error("Please fill in all fields")
-                elif not validate_email(new_email):
-                    st.error("Please enter a valid email address")
-                elif new_password != confirm_password:
-                    st.error("Passwords do not match")
-                elif len(new_password) < 6:
-                    st.error("Password must be at least 6 characters")
-                else:
-                    users = load_users()
-                    if new_email in users:
-                        st.error("Email already registered")
-                    else:
-                        users[new_email] = {
-                            'password': hash_password(new_password),
-                            'preferences': {
-                                'email_notifications': email_notifications,
-                                'last_notification': None
-                            },
-                            'created_at': datetime.datetime.now().isoformat()
-                        }
-                        save_users(users)
-                        
-                        # Send welcome email
-                        if email_notifications:
-                            subject = "Welcome to Browne Portfolio Advisor"
-                            body = f"""
-                            <html>
-                            <body style="font-family: Arial, sans-serif;">
-                                <h2>Welcome!</h2>
-                                <p>Thank you for registering with Browne Portfolio Put Option Advisor.</p>
-                                <p>You will receive email notifications when there are buy or sell signals based on our strategy.</p>
-                                <p><a href="http://your-app-url.com">Access the app</a></p>
-                            </body>
-                            </html>
-                            """
-                            send_email_notification(new_email, subject, body)
-                        
-                        st.success("Registration successful! Please login.")
+# Title and description
+st.title("📊 Browne Portfolio Put Option Advisor")
+st.markdown("### Tail Risk Hedging Strategy Recommendation System")
+st.markdown("---")
 
-# Check notification and send if needed
-def check_and_send_notification(user_email, recommendation_type, data):
-    """Check if notification should be sent and send it"""
-    users = load_users()
+# Sidebar for user inputs
+with st.sidebar:
+    st.header("⚙️ Configuration")
     
-    if user_email not in users:
-        return
+    # Date range (1 month max)
+    end_date = datetime.date.today()
+    start_date = end_date - datetime.timedelta(days=30)
     
-    user_prefs = users[user_email].get('preferences', {})
+    st.info(f"📅 Analysis Period: {start_date} to {end_date}")
     
-    # Check if notifications are enabled
-    if not user_prefs.get('email_notifications', True):
-        return
-    
-    # Check if we already sent notification recently (within 24 hours)
-    last_notification = user_prefs.get('last_notification')
-    if last_notification:
-        last_time = datetime.datetime.fromisoformat(last_notification)
-        if (datetime.datetime.now() - last_time).total_seconds() < 86400:  # 24 hours
-            return
-    
-    # Send notification
-    subject, body = create_recommendation_email(user_email, recommendation_type, data)
-    if send_email_notification(user_email, subject, body):
-        # Update last notification time
-        users[user_email]['preferences']['last_notification'] = datetime.datetime.now().isoformat()
-        save_users(users)
-        st.success(f"📧 Email notification sent to {user_email}")
-
-# Main app (only shown if logged in)
-if not st.session_state.logged_in:
-    show_auth_page()
-else:
-    # Show logout button in sidebar
-    with st.sidebar:
-        st.markdown(f"👤 Logged in as: **{st.session_state.user_email}**")
-        if st.button("Logout"):
-            st.session_state.logged_in = False
-            st.session_state.user_email = None
-            st.session_state.user_preferences = {}
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # User preferences
-        st.header("⚙️ Notification Settings")
-        users = load_users()
-        current_prefs = users[st.session_state.user_email].get('preferences', {})
-        
-        email_notif = st.checkbox(
-            "Enable email notifications",
-            value=current_prefs.get('email_notifications', True)
-        )
-        
-        if st.button("Save Preferences"):
-            users[st.session_state.user_email]['preferences']['email_notifications'] = email_notif
-            save_users(users)
-            st.success("Preferences saved!")
-        
-        st.markdown("---")
-        
-        # Configuration
-        st.header("⚙️ Configuration")
-        
-        end_date = datetime.date.today()
-        start_date = end_date - datetime.timedelta(days=30)
-        
-        st.info(f"📅 Analysis Period: {start_date} to {end_date}")
-        
-        st.markdown("---")
-        
-        # Position management
-        has_position = st.radio(
-            "Do you currently have a put option position?",
-            options=["No", "Yes"],
-            index=0
-        )
-        
-        entry_date = None
-        entry_price = None
-        entry_strike = None
-        entry_spy_price = None
-        
-        if has_position == "Yes":
-            # Load saved position if exists
-            positions = load_positions()
-            saved_position = positions.get(st.session_state.user_email, {})
-            
-            st.markdown("#### Position Details")
-            entry_date = st.date_input(
-                "Entry Date",
-                value=pd.to_datetime(saved_position.get('entry_date', end_date - datetime.timedelta(days=14))).date() if saved_position.get('entry_date') else end_date - datetime.timedelta(days=14),
-                max_value=end_date
-            )
-            entry_spy_price = st.number_input(
-                "SPY Price at Entry ($)",
-                min_value=100.0,
-                max_value=1000.0,
-                value=float(saved_position.get('entry_spy_price', 580.0)),
-                step=1.0
-            )
-            entry_strike = st.number_input(
-                "Strike Price ($)",
-                min_value=100.0,
-                max_value=1000.0,
-                value=float(saved_position.get('entry_strike', 464.0)),
-                step=1.0
-            )
-            entry_price = st.number_input(
-                "Entry Put Price ($)",
-                min_value=0.01,
-                max_value=100.0,
-                value=float(saved_position.get('entry_price', 5.0)),
-                step=0.1
-            )
-            
-            if st.button("Save Position"):
-                positions[st.session_state.user_email] = {
-                    'entry_date': entry_date.isoformat(),
-                    'entry_spy_price': entry_spy_price,
-                    'entry_strike': entry_strike,
-                    'entry_price': entry_price
-                }
-                save_positions(positions)
-                st.success("Position saved!")
-        
-        st.markdown("---")
-        st.markdown("#### Strategy Parameters")
-        st.metric("Buy Threshold (Normal)", f"{IV_BUY_THRESHOLD_NORMAL*100:.0f}%")
-        st.metric("Buy Threshold (Relaxed)", f"{IV_BUY_THRESHOLD_RELAXED*100:.0f}%")
-        st.metric("Sell Threshold", f"{IV_SELL_THRESHOLD*100:.0f}%")
-    
-    # Title
-    st.title("📊 Browne Portfolio Put Option Advisor")
-    st.markdown("### Tail Risk Hedging Strategy Recommendation System")
     st.markdown("---")
     
-    # Fetch data with improved error handling
-    @st.cache_data(ttl=3600)
-    def fetch_market_data(start, end):
-        """Fetch market data with robust error handling"""
-        try:
-            st.write("Attempting to fetch SPY data...")
-            
-            # Method 1: Try with auto_adjust=True
-            try:
-                spy_data = yf.download('SPY', start=start, end=end, auto_adjust=True, progress=False)
-                if not spy_data.empty:
-                    spy = spy_data['Close'] if 'Close' in spy_data.columns else spy_data['Adj Close']
-                else:
-                    raise ValueError("SPY data is empty")
-            except Exception as e1:
-                st.warning(f"Method 1 failed: {e1}. Trying alternative...")
-                # Method 2: Try without auto_adjust
-                spy_data = yf.download('SPY', start=start, end=end, auto_adjust=False, progress=False)
-                spy = spy_data['Adj Close'] if 'Adj Close' in spy_data.columns else spy_data['Close']
-            
-            if isinstance(spy, pd.DataFrame):
-                spy = spy.squeeze()
-            
-            st.write(f"✓ SPY data fetched: {len(spy)} rows")
-            
-            # Fetch VIX
-            st.write("Attempting to fetch VIX data...")
-            try:
-                vix_data = yf.download('^VIX', start=start, end=end, progress=False)
-                if not vix_data.empty:
-                    vix = vix_data['Close'] if 'Close' in vix_data.columns else vix_data['Adj Close']
-                else:
-                    raise ValueError("VIX data is empty")
-            except Exception as e2:
-                st.warning(f"VIX fetch failed: {e2}. Using synthetic VIX...")
-                # Create synthetic VIX based on SPY volatility if VIX fails
-                returns = spy.pct_change().dropna()
-                rolling_vol = returns.rolling(window=20).std() * np.sqrt(252) * 100
-                vix = rolling_vol
-            
-            if isinstance(vix, pd.DataFrame):
-                vix = vix.squeeze()
-            
-            st.write(f"✓ VIX data fetched: {len(vix)} rows")
-            
-            # Combine and clean data
-            data = pd.DataFrame({'SPY': spy, 'VIX': vix})
-            data = data.dropna()
-            
-            if len(data) == 0:
-                raise ValueError("No data available after cleaning")
-            
-            st.write(f"✓ Final dataset: {len(data)} rows from {data.index[0].date()} to {data.index[-1].date()}")
-            
-            return data
-            
-        except Exception as e:
-            st.error(f"Error fetching data: {str(e)}")
-            st.error("Detailed error information:")
-            st.code(str(e))
-            
-            # Try to provide helpful debugging info
-            import sys
-            st.write("Python version:", sys.version)
-            st.write("Pandas version:", pd.__version__)
-            try:
-                st.write("yfinance version:", yf.__version__)
-            except:
-                st.write("yfinance version: Unknown")
-            
-            return None
+    # Do you currently have a put option?
+    has_position = st.radio(
+        "Do you currently have a put option position?",
+        options=["No", "Yes"],
+        index=0
+    )
     
-    with st.spinner("Fetching market data..."):
-        # Add debug expander
-        with st.expander("🔍 Data Fetch Debug Info", expanded=False):
-            data = fetch_market_data(start_date, end_date)
+    # If yes, ask for entry details
+    entry_date = None
+    entry_price = None
+    entry_strike = None
+    entry_spy_price = None
     
-    # If data fetch failed, try with a simpler date range
-    if data is None or len(data) == 0:
-        st.warning("Initial fetch failed. Trying with last 7 days only...")
-        start_date_short = end_date - datetime.timedelta(days=7)
-        with st.expander("🔍 Retry Debug Info", expanded=False):
-            data = fetch_market_data(start_date_short, end_date)
+    if has_position == "Yes":
+        st.markdown("#### Position Details")
+        entry_date = st.date_input(
+            "Entry Date",
+            value=end_date - datetime.timedelta(days=14),
+            max_value=end_date
+        )
+        entry_spy_price = st.number_input(
+            "SPY Price at Entry ($)",
+            min_value=100.0,
+            max_value=1000.0,
+            value=580.0,
+            step=1.0
+        )
+        entry_strike = st.number_input(
+            "Strike Price ($)",
+            min_value=100.0,
+            max_value=1000.0,
+            value=464.0,
+            step=1.0
+        )
+        entry_price = st.number_input(
+            "Entry Put Price ($)",
+            min_value=0.01,
+            max_value=100.0,
+            value=5.0,
+            step=0.1
+        )
     
-    if data is not None and len(data) > 0:
-        # Calculate adjusted IV for each day
-        adj_ivs = []
-        strikes = []
-        put_prices = []
+    st.markdown("---")
+    st.markdown("#### Strategy Parameters")
+    st.metric("Buy Threshold (Normal)", f"{IV_BUY_THRESHOLD_NORMAL*100:.0f}%")
+    st.metric("Buy Threshold (Relaxed)", f"{IV_BUY_THRESHOLD_RELAXED*100:.0f}%")
+    st.metric("Sell Threshold", f"{IV_SELL_THRESHOLD*100:.0f}%")
+    st.metric("OTM Percentage", f"{OTM_PERCENT*100:.0f}%")
+    st.metric("Days to Expiry", f"{TIME_TO_EXPIRY_DAYS}")
+
+# Fetch data
+@st.cache_data(ttl=3600)
+def fetch_market_data(start, end):
+    try:
+        spy = yf.download('SPY', start=start, end=end, auto_adjust=False, progress=False)['Adj Close']
+        vix = yf.download('^VIX', start=start, end=end, auto_adjust=False, progress=False)['Close']
         
-        for idx, row in data.iterrows():
-            S = row['SPY']
-            vix = row['VIX']
-            strike = S * (1 - OTM_PERCENT)
-            adj_iv = get_skewed_implied_vol(S, strike, vix, TIME_TO_EXPIRY)
-            put_price = price_otm_put(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, vix)
-            
-            adj_ivs.append(adj_iv * 100)
-            strikes.append(strike)
-            put_prices.append(put_price)
+        if isinstance(spy, pd.DataFrame): spy = spy.squeeze()
+        if isinstance(vix, pd.DataFrame): vix = vix.squeeze()
         
-        data['Adj_IV'] = adj_ivs
-        data['Strike'] = strikes
-        data['Put_Price'] = put_prices
+        data = pd.DataFrame({'SPY': spy, 'VIX': vix}).dropna()
+        return data
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return None
+
+# Main content
+with st.spinner("Fetching market data..."):
+    data = fetch_market_data(start_date, end_date)
+
+if data is not None and len(data) > 0:
+    # Calculate adjusted IV for each day
+    adj_ivs = []
+    strikes = []
+    put_prices = []
+    
+    for idx, row in data.iterrows():
+        S = row['SPY']
+        vix = row['VIX']
+        strike = S * (1 - OTM_PERCENT)
+        adj_iv = get_skewed_implied_vol(S, strike, vix, TIME_TO_EXPIRY)
+        put_price = price_otm_put(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, vix)
         
-        # Current market conditions
-        latest_date = data.index[-1]
-        latest_spy = data['SPY'].iloc[-1]
-        latest_vix = data['VIX'].iloc[-1]
-        latest_adj_iv = data['Adj_IV'].iloc[-1]
-        latest_strike = data['Strike'].iloc[-1]
-        latest_put_price = data['Put_Price'].iloc[-1]
+        adj_ivs.append(adj_iv * 100)
+        strikes.append(strike)
+        put_prices.append(put_price)
+    
+    data['Adj_IV'] = adj_ivs
+    data['Strike'] = strikes
+    data['Put_Price'] = put_prices
+    
+    # Current market conditions
+    latest_date = data.index[-1]
+    latest_spy = data['SPY'].iloc[-1]
+    latest_vix = data['VIX'].iloc[-1]
+    latest_adj_iv = data['Adj_IV'].iloc[-1]
+    latest_strike = data['Strike'].iloc[-1]
+    latest_put_price = data['Put_Price'].iloc[-1]
+    
+    # Display current market conditions
+    st.header("📈 Current Market Conditions")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        st.metric("SPY Price", f"${latest_spy:.2f}")
+    with col2:
+        st.metric("VIX", f"{latest_vix:.2f}")
+    with col3:
+        st.metric("Adjusted IV", f"{latest_adj_iv:.1f}%")
+    with col4:
+        st.metric("Strike (20% OTM)", f"${latest_strike:.2f}")
+    with col5:
+        st.metric("Put Price", f"${latest_put_price:.2f}")
+    
+    st.markdown("---")
+    
+    # Recommendation logic
+    if has_position == "No":
+        st.header("🎯 BUY RECOMMENDATION")
         
-        # Display current market conditions
-        st.header("📈 Current Market Conditions")
-        col1, col2, col3, col4, col5 = st.columns(5)
+        # Find buy opportunities
+        buy_normal = data[data['Adj_IV'] <= IV_BUY_THRESHOLD_NORMAL * 100]
+        buy_relaxed = data[data['Adj_IV'] <= IV_BUY_THRESHOLD_RELAXED * 100]
+        
+        # Check if we should buy now
+        should_buy_normal = latest_adj_iv <= IV_BUY_THRESHOLD_NORMAL * 100
+        should_buy_relaxed = latest_adj_iv <= IV_BUY_THRESHOLD_RELAXED * 100
+        
+        if should_buy_normal:
+            st.success("✅ **BUY NOW** - Adjusted IV is below 20% threshold!")
+            st.markdown(f"""
+            ### Recommended Action
+            - **Action**: Buy SPY Put Options
+            - **Strike**: ${latest_strike:.2f} (20% OTM)
+            - **Expiry**: {TIME_TO_EXPIRY_DAYS} days
+            - **Estimated Cost**: ${latest_put_price:.2f} per contract
+            - **Current Adj IV**: {latest_adj_iv:.1f}% (Target: ≤20%)
+            - **Reason**: Normal buy threshold met
+            """)
+        elif should_buy_relaxed:
+            st.warning("⚠️ **CONSIDER BUYING** - Adjusted IV is below 40% relaxed threshold")
+            st.markdown(f"""
+            ### Recommended Action
+            - **Action**: Consider buying if 7+ days since last position
+            - **Strike**: ${latest_strike:.2f} (20% OTM)
+            - **Expiry**: {TIME_TO_EXPIRY_DAYS} days
+            - **Estimated Cost**: ${latest_put_price:.2f} per contract
+            - **Current Adj IV**: {latest_adj_iv:.1f}% (Target: ≤40% after 7 days)
+            - **Reason**: Relaxed buy threshold met
+            """)
+        else:
+            st.info("⏳ **WAIT** - Adjusted IV is too high")
+            st.markdown(f"""
+            ### Current Status
+            - **Current Adj IV**: {latest_adj_iv:.1f}%
+            - **Target (Normal)**: ≤{IV_BUY_THRESHOLD_NORMAL*100:.0f}%
+            - **Target (Relaxed)**: ≤{IV_BUY_THRESHOLD_RELAXED*100:.0f}% (after 7 days)
+            - **Recommendation**: Wait for lower volatility before entering position
+            """)
+        
+        # Show historical buy opportunities
+        st.markdown("### 📅 Recent Buy Opportunities (Last 30 Days)")
+        
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.metric("SPY Price", f"${latest_spy:.2f}")
+            st.markdown("#### Normal Buy Signals (IV ≤ 20%)")
+            if len(buy_normal) > 0:
+                for idx, row in buy_normal.tail(5).iterrows():
+                    st.write(f"- {idx.date()}: IV={row['Adj_IV']:.1f}%, SPY=${row['SPY']:.2f}, Put=${row['Put_Price']:.2f}")
+            else:
+                st.write("No opportunities in the last 30 days")
+        
         with col2:
-            st.metric("VIX", f"{latest_vix:.2f}")
+            st.markdown("#### Relaxed Buy Signals (IV ≤ 40%)")
+            if len(buy_relaxed) > 0:
+                for idx, row in buy_relaxed.tail(5).iterrows():
+                    st.write(f"- {idx.date()}: IV={row['Adj_IV']:.1f}%, SPY=${row['SPY']:.2f}, Put=${row['Put_Price']:.2f}")
+            else:
+                st.write("No opportunities in the last 30 days")
+    
+    else:  # Has position
+        st.header("💰 SELL RECOMMENDATION")
+        
+        # Calculate current position value
+        days_held = (latest_date.date() - entry_date).days
+        time_left = max((TIME_TO_EXPIRY_DAYS - days_held) / 365, 0.001)
+        
+        current_put_price = price_otm_put(latest_spy, entry_strike, time_left, RISK_FREE_RATE, latest_vix)
+        current_adj_iv = get_skewed_implied_vol(latest_spy, entry_strike, latest_vix, time_left)
+        
+        profit_loss = current_put_price - entry_price
+        profit_loss_pct = (profit_loss / entry_price) * 100
+        
+        # Display position summary
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Days Held", f"{days_held}")
+        with col2:
+            st.metric("Entry Price", f"${entry_price:.2f}")
         with col3:
-            st.metric("Adjusted IV", f"{latest_adj_iv:.1f}%")
+            st.metric("Current Price", f"${current_put_price:.2f}", f"{profit_loss:+.2f}")
         with col4:
-            st.metric("Strike (20% OTM)", f"${latest_strike:.2f}")
-        with col5:
-            st.metric("Put Price", f"${latest_put_price:.2f}")
+            st.metric("P&L %", f"{profit_loss_pct:+.1f}%")
         
-        st.markdown("---")
+        # Check if we should sell
+        should_sell = latest_adj_iv >= IV_SELL_THRESHOLD * 100
         
-        # Recommendation logic with email notifications
-        if has_position == "No":
-            st.header("🎯 BUY RECOMMENDATION")
+        if should_sell:
+            st.success("✅ **SELL NOW** - Adjusted IV is above 60% threshold!")
+            st.markdown(f"""
+            ### Recommended Action
+            - **Action**: SELL your put options
+            - **Current Strike**: ${entry_strike:.2f}
+            - **Current Put Price**: ${current_put_price:.2f}
+            - **Entry Put Price**: ${entry_price:.2f}
+            - **Profit/Loss**: ${profit_loss:+.2f} ({profit_loss_pct:+.1f}%)
+            - **Current Adj IV**: {latest_adj_iv:.1f}% (Target: ≥60%)
+            - **Days Held**: {days_held} days
+            - **Reason**: Sell threshold met - volatility spike detected
+            """)
+        else:
+            st.info("⏳ **HOLD** - Adjusted IV has not reached sell threshold yet")
+            st.markdown(f"""
+            ### Current Position Status
+            - **Current Adj IV**: {latest_adj_iv:.1f}%
+            - **Sell Target**: ≥{IV_SELL_THRESHOLD*100:.0f}%
+            - **Current P&L**: ${profit_loss:+.2f} ({profit_loss_pct:+.1f}%)
+            - **Days Held**: {days_held} / {TIME_TO_EXPIRY_DAYS}
+            - **Recommendation**: Hold and wait for volatility spike
+            """)
+        
+        # Show position performance
+        st.markdown("### 📊 Position Performance")
+        
+        # Calculate historical values for this position
+        position_values = []
+        position_dates = []
+        
+        for idx, row in data[data.index >= pd.Timestamp(entry_date)].iterrows():
+            days_from_entry = (idx.date() - entry_date).days
+            time_remaining = max((TIME_TO_EXPIRY_DAYS - days_from_entry) / 365, 0.001)
+            pos_price = price_otm_put(row['SPY'], entry_strike, time_remaining, RISK_FREE_RATE, row['VIX'])
+            position_values.append(pos_price)
+            position_dates.append(idx)
+        
+        if len(position_values) > 0:
+            fig_pos = go.Figure()
+            fig_pos.add_trace(go.Scatter(
+                x=position_dates,
+                y=position_values,
+                mode='lines',
+                name='Put Value',
+                line=dict(color='blue', width=2)
+            ))
+            fig_pos.add_hline(y=entry_price, line_dash="dash", line_color="gray", 
+                            annotation_text="Entry Price")
+            fig_pos.update_layout(
+                title="Put Option Value Since Entry",
+                xaxis_title="Date",
+                yaxis_title="Put Price ($)",
+                height=400,
+                hovermode='x unified'
+            )
+            st.plotly_chart(fig_pos, use_container_width=True)
+    
+    # Visualization
+    # Option Strategy Matrix Analysis
+    st.markdown("---")
+    st.header("🎲 Option Strategy Matrix - Strike vs Expiry Analysis")
+    st.markdown("*Compare different OTM depths and expiration dates to find optimal tail hedge*")
+    
+    # Define comparison parameters
+    otm_levels = [0.15, 0.20, 0.25, 0.30]  # 15%, 20%, 25%, 30% OTM
+    expiry_months = [3, 6, 9, 12]  # months
+    
+    # Calculate matrix
+    matrix_data = []
+    
+    for otm in otm_levels:
+        row_data = {'OTM %': f"{otm*100:.0f}%"}
+        strike = latest_spy * (1 - otm)
+        
+        for months in expiry_months:
+            days = months * 30
+            T = days / 365
+            put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+            adj_iv = get_skewed_implied_vol(latest_spy, strike, latest_vix, T)
             
-            should_buy_normal = latest_adj_iv <= IV_BUY_THRESHOLD_NORMAL * 100
-            should_buy_relaxed = latest_adj_iv <= IV_BUY_THRESHOLD_RELAXED * 100
+            row_data[f'{months}M'] = put_price
+            row_data[f'{months}M_IV'] = adj_iv
+            row_data[f'{months}M_Strike'] = strike
+        
+        matrix_data.append(row_data)
+    
+    # Create tabs for different views
+    tab1, tab2, tab3, tab4 = st.tabs(["💵 Price Matrix", "📊 Cost Analysis", "📈 Heatmaps", "💡 Recommendations"])
+    
+    with tab1:
+        st.markdown("### Option Prices by Strike and Expiry")
+        st.markdown("*Prices shown per contract (multiply by 100 for total cost)*")
+        
+        # Create price comparison table
+        price_df = pd.DataFrame(matrix_data)
+        price_display = price_df[['OTM %', '3M', '6M', '9M', '12M']].copy()
+        
+        # Format as currency
+        for col in ['3M', '6M', '9M', '12M']:
+            price_display[col] = price_display[col].apply(lambda x: f"${x:.2f}")
+        
+        st.dataframe(price_display, use_container_width=True, hide_index=True)
+        
+        # Annual cost comparison
+        st.markdown("### 💰 Annual Cost Comparison Strategies")
+        st.markdown("*Compare rolling strategies: buying multiple short-term vs fewer long-term options*")
+        
+        annual_strategies = []
+        
+        for otm in otm_levels:
+            strike = latest_spy * (1 - otm)
+            strategy_row = {'OTM %': f"{otm*100:.0f}%", 'Strike': f"${strike:.2f}"}
             
-            if should_buy_normal:
-                st.success("✅ **BUY NOW** - Adjusted IV is below 20% threshold!")
-                st.markdown(f"""
-                ### Recommended Action
-                - **Action**: Buy SPY Put Options
-                - **Strike**: ${latest_strike:.2f} (20% OTM)
-                - **Expiry**: {TIME_TO_EXPIRY_DAYS} days
-                - **Estimated Cost**: ${latest_put_price:.2f} per contract
-                - **Current Adj IV**: {latest_adj_iv:.1f}% (Target: ≤20%)
-                - **Reason**: Normal buy threshold met
-                """)
+            # Strategy 1: Roll 3M options (buy 4 times per year)
+            price_3m = price_otm_put(latest_spy, strike, 0.25, RISK_FREE_RATE, latest_vix)
+            strategy_row['4x 3M (Roll Quarterly)'] = f"${price_3m * 4:.2f}"
+            
+            # Strategy 2: Roll 6M options (buy 2 times per year)
+            price_6m = price_otm_put(latest_spy, strike, 0.5, RISK_FREE_RATE, latest_vix)
+            strategy_row['2x 6M (Roll Semi-Annual)'] = f"${price_6m * 2:.2f}"
+            
+            # Strategy 3: Buy 12M once
+            price_12m = price_otm_put(latest_spy, strike, 1.0, RISK_FREE_RATE, latest_vix)
+            strategy_row['1x 12M (Annual)'] = f"${price_12m:.2f}"
+            
+            # Calculate most economical
+            costs = [price_3m * 4, price_6m * 2, price_12m]
+            min_cost = min(costs)
+            strategies = ['Roll Quarterly', 'Roll Semi-Annual', 'Annual']
+            best = strategies[costs.index(min_cost)]
+            strategy_row['Most Economical'] = best
+            strategy_row['Savings vs Worst'] = f"${max(costs) - min_cost:.2f}"
+            
+            annual_strategies.append(strategy_row)
+        
+        annual_df = pd.DataFrame(annual_strategies)
+        st.dataframe(annual_df, use_container_width=True, hide_index=True)
+    
+    with tab2:
+        st.markdown("### Cost Efficiency Analysis")
+        
+        # Create cost per dollar of protection analysis
+        cost_efficiency = []
+        
+        for otm in otm_levels:
+            strike = latest_spy * (1 - otm)
+            otm_label = f"{otm*100:.0f}%"
+            
+            for months in expiry_months:
+                days = months * 30
+                T = days / 365
+                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
                 
-                # Send email notification
-                email_data = {
-                    'spy': latest_spy,
-                    'vix': latest_vix,
-                    'adj_iv': latest_adj_iv,
-                    'strike': latest_strike,
-                    'put_price': latest_put_price,
-                    'reason': 'Normal buy threshold met (IV ≤ 20%)'
-                }
-                check_and_send_notification(st.session_state.user_email, "BUY", email_data)
+                # Max profit if SPY goes to 0
+                max_profit = strike
+                # Cost per dollar of max protection
+                cost_efficiency_ratio = put_price / max_profit
+                # Annualized cost
+                annual_cost = put_price * (12 / months)
                 
-            elif should_buy_relaxed:
-                st.warning("⚠️ **CONSIDER BUYING** - Adjusted IV is below 40% relaxed threshold")
-                st.markdown(f"""
-                ### Recommended Action
-                - **Action**: Consider buying if 7+ days since last position
-                - **Strike**: ${latest_strike:.2f} (20% OTM)
-                - **Expiry**: {TIME_TO_EXPIRY_DAYS} days
-                - **Estimated Cost**: ${latest_put_price:.2f} per contract
-                - **Current Adj IV**: {latest_adj_iv:.1f}% (Target: ≤40% after 7 days)
-                - **Reason**: Relaxed buy threshold met
-                """)
-            else:
-                st.info("⏳ **WAIT** - Adjusted IV is too high")
-                st.markdown(f"""
-                ### Current Status
-                - **Current Adj IV**: {latest_adj_iv:.1f}%
-                - **Target (Normal)**: ≤{IV_BUY_THRESHOLD_NORMAL*100:.0f}%
-                - **Target (Relaxed)**: ≤{IV_BUY_THRESHOLD_RELAXED*100:.0f}% (after 7 days)
-                - **Recommendation**: Wait for lower volatility before entering position
-                """)
+                cost_efficiency.append({
+                    'OTM': otm_label,
+                    'Expiry': f'{months}M',
+                    'Strike': strike,
+                    'Put Price': put_price,
+                    'Max Profit': max_profit,
+                    'Cost per $1 Protection': cost_efficiency_ratio,
+                    'Annualized Cost': annual_cost
+                })
         
-        else:  # Has position
-            st.header("💰 SELL RECOMMENDATION")
+        efficiency_df = pd.DataFrame(cost_efficiency)
+        
+        # Show metrics
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Cheapest Options (by absolute price)")
+            cheapest = efficiency_df.nsmallest(5, 'Put Price')[['OTM', 'Expiry', 'Put Price', 'Strike']]
+            cheapest['Put Price'] = cheapest['Put Price'].apply(lambda x: f"${x:.2f}")
+            cheapest['Strike'] = cheapest['Strike'].apply(lambda x: f"${x:.2f}")
+            st.dataframe(cheapest, hide_index=True)
+        
+        with col2:
+            st.markdown("#### Most Efficient (cost per $1 protection)")
+            most_efficient = efficiency_df.nsmallest(5, 'Cost per $1 Protection')[['OTM', 'Expiry', 'Cost per $1 Protection', 'Put Price']]
+            most_efficient['Cost per $1 Protection'] = most_efficient['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
+            most_efficient['Put Price'] = most_efficient['Put Price'].apply(lambda x: f"${x:.2f}")
+            st.dataframe(most_efficient, hide_index=True)
+        
+        # Full table
+        st.markdown("#### Complete Efficiency Analysis")
+        display_eff = efficiency_df.copy()
+        display_eff['Strike'] = display_eff['Strike'].apply(lambda x: f"${x:.2f}")
+        display_eff['Put Price'] = display_eff['Put Price'].apply(lambda x: f"${x:.2f}")
+        display_eff['Max Profit'] = display_eff['Max Profit'].apply(lambda x: f"${x:.2f}")
+        display_eff['Cost per $1 Protection'] = display_eff['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
+        display_eff['Annualized Cost'] = display_eff['Annualized Cost'].apply(lambda x: f"${x:.2f}")
+        st.dataframe(display_eff, use_container_width=True, hide_index=True)
+    
+    with tab3:
+        st.markdown("### Visual Comparison Heatmaps")
+        
+        # Prepare data for heatmaps
+        price_matrix = []
+        iv_matrix = []
+        annual_cost_matrix = []
+        
+        for otm in otm_levels:
+            price_row = []
+            iv_row = []
+            annual_row = []
+            strike = latest_spy * (1 - otm)
             
-            days_held = (latest_date.date() - entry_date).days
-            time_left = max((TIME_TO_EXPIRY_DAYS - days_held) / 365, 0.001)
-            
-            current_put_price = price_otm_put(latest_spy, entry_strike, time_left, RISK_FREE_RATE, latest_vix)
-            
-            profit_loss = current_put_price - entry_price
-            profit_loss_pct = (profit_loss / entry_price) * 100
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Days Held", f"{days_held}")
-            with col2:
-                st.metric("Entry Price", f"${entry_price:.2f}")
-            with col3:
-                st.metric("Current Price", f"${current_put_price:.2f}", f"{profit_loss:+.2f}")
-            with col4:
-                st.metric("P&L %", f"{profit_loss_pct:+.1f}%")
-            
-            should_sell = latest_adj_iv >= IV_SELL_THRESHOLD * 100
-            
-            if should_sell:
-                st.success("✅ **SELL NOW** - Adjusted IV is above 60% threshold!")
-                st.markdown(f"""
-                ### Recommended Action
-                - **Action**: SELL your put options
-                - **Current Strike**: ${entry_strike:.2f}
-                - **Current Put Price**: ${current_put_price:.2f}
-                - **Entry Put Price**: ${entry_price:.2f}
-                - **Profit/Loss**: ${profit_loss:+.2f} ({profit_loss_pct:+.1f}%)
-                - **Current Adj IV**: {latest_adj_iv:.1f}% (Target: ≥60%)
-                - **Days Held**: {days_held} days
-                - **Reason**: Sell threshold met - volatility spike detected
-                """)
+            for months in expiry_months:
+                days = months * 30
+                T = days / 365
+                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+                adj_iv = get_skewed_implied_vol(latest_spy, strike, latest_vix, T)
+                annual_cost = put_price * (12 / months)
                 
-                # Send email notification
-                email_data = {
-                    'spy': latest_spy,
-                    'vix': latest_vix,
-                    'adj_iv': latest_adj_iv,
-                    'current_price': current_put_price,
-                    'entry_price': entry_price,
-                    'pl': profit_loss,
-                    'pl_pct': profit_loss_pct
-                }
-                check_and_send_notification(st.session_state.user_email, "SELL", email_data)
+                price_row.append(put_price)
+                iv_row.append(adj_iv * 100)
+                annual_row.append(annual_cost)
+            
+            price_matrix.append(price_row)
+            iv_matrix.append(iv_row)
+            annual_cost_matrix.append(annual_row)
+        
+        # Create heatmaps
+        otm_labels = [f"{int(otm*100)}% OTM" for otm in otm_levels]
+        expiry_labels = [f"{m} Months" for m in expiry_months]
+        
+        fig_heat = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=('Put Prices ($)', 'Adjusted IV (%)', 'Annualized Cost ($)'),
+            horizontal_spacing=0.15
+        )
+        
+        # Price heatmap
+        fig_heat.add_trace(
+            go.Heatmap(
+                z=price_matrix,
+                x=expiry_labels,
+                y=otm_labels,
+                colorscale='Greens',
+                text=[[f'${val:.2f}' for val in row] for row in price_matrix],
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                showscale=True,
+                colorbar=dict(x=0.28)
+            ),
+            row=1, col=1
+        )
+        
+        # IV heatmap
+        fig_heat.add_trace(
+            go.Heatmap(
+                z=iv_matrix,
+                x=expiry_labels,
+                y=otm_labels,
+                colorscale='Blues',
+                text=[[f'{val:.1f}%' for val in row] for row in iv_matrix],
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                showscale=True,
+                colorbar=dict(x=0.63)
+            ),
+            row=1, col=2
+        )
+        
+        # Annual cost heatmap
+        fig_heat.add_trace(
+            go.Heatmap(
+                z=annual_cost_matrix,
+                x=expiry_labels,
+                y=otm_labels,
+                colorscale='Reds',
+                text=[[f'${val:.2f}' for val in row] for row in annual_cost_matrix],
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                showscale=True,
+                colorbar=dict(x=0.98)
+            ),
+            row=1, col=3
+        )
+        
+        fig_heat.update_layout(height=400)
+        st.plotly_chart(fig_heat, use_container_width=True)
+        
+        # 3D surface plot
+        st.markdown("### 3D Price Surface")
+        
+        fig_3d = go.Figure(data=[go.Surface(
+            z=price_matrix,
+            x=expiry_months,
+            y=[otm*100 for otm in otm_levels],
+            colorscale='Viridis',
+            showscale=True
+        )])
+        
+        fig_3d.update_layout(
+            title='Put Option Prices: OTM % vs Expiry',
+            scene=dict(
+                xaxis_title='Months to Expiry',
+                yaxis_title='OTM %',
+                zaxis_title='Price ($)',
+            ),
+            height=600
+        )
+        
+        st.plotly_chart(fig_3d, use_container_width=True)
+    
+    with tab4:
+        st.markdown("### 💡 Strategy Recommendations")
+        
+        # Taleb/Universa style recommendation
+        st.markdown("#### 🎯 Tail Risk Hedge (Taleb/Universa Style)")
+        st.info("""
+        **Deep OTM Puts for Convexity:**
+        - Universa typically uses 25-30% OTM puts for maximum convexity
+        - Cheaper upfront cost allows for more contracts
+        - Massive asymmetric payoff during tail events
+        - Accept high theta decay for extreme downside protection
+        """)
+        
+        # Find the cheapest deep OTM option
+        deep_otm = [0.25, 0.30]
+        taleb_options = []
+        
+        for otm in deep_otm:
+            strike = latest_spy * (1 - otm)
+            for months in [3, 6]:
+                T = months * 30 / 365
+                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+                annual_cost = put_price * (12 / months)
                 
-            else:
-                st.info("⏳ **HOLD** - Adjusted IV has not reached sell threshold yet")
-                st.markdown(f"""
-                ### Current Position Status
-                - **Current Adj IV**: {latest_adj_iv:.1f}%
-                - **Sell Target**: ≥{IV_SELL_THRESHOLD*100:.0f}%
-                - **Current P&L**: ${profit_loss:+.2f} ({profit_loss_pct:+.1f}%)
-                - **Days Held**: {days_held} / {TIME_TO_EXPIRY_DAYS}
-                - **Recommendation**: Hold and wait for volatility spike
-                """)
+                taleb_options.append({
+                    'OTM': f"{otm*100:.0f}%",
+                    'Expiry': f"{months}M",
+                    'Strike': f"${strike:.2f}",
+                    'Price': f"${put_price:.2f}",
+                    'Annual Cost (Rolling)': f"${annual_cost:.2f}"
+                })
         
-        # Rest of the app continues with Option Strategy Matrix, etc.
-        # [Include all the matrix analysis code from previous version here]
+        st.dataframe(pd.DataFrame(taleb_options), hide_index=True)
         
-    else:
-        st.error("Unable to fetch market data. Please try again later.")
+        # Balanced approach
+        st.markdown("#### ⚖️ Balanced Approach")
+        st.success("""
+        **Moderate OTM with Regular Rolling:**
+        - 20% OTM strikes balance cost and protection
+        - 6-month expiry reduces roll frequency
+        - More likely to profit in moderate corrections
+        - Good for typical portfolio hedging
+        """)
+        
+        # Cost comparison
+        st.markdown("#### 💵 Example: $800 Hedge Budget")
+        
+        budget = 800
+        
+        comparison = []
+        
+        # Strategy 1: Deep OTM, short dated
+        strike_30 = latest_spy * 0.70
+        price_30_3m = price_otm_put(latest_spy, strike_30, 0.25, RISK_FREE_RATE, latest_vix)
+        contracts_30 = budget / (price_30_3m * 100)
+        comparison.append({
+            'Strategy': '30% OTM, 3M (Taleb Style)',
+            'Strike': f"${strike_30:.2f}",
+            'Price per Contract': f"${price_30_3m:.2f}",
+            'Contracts Affordable': f"{contracts_30:.1f}",
+            'Total Notional': f"${strike_30 * contracts_30 * 100:,.0f}",
+            'Roll Frequency': '4x per year'
+        })
+        
+        # Strategy 2: Moderate OTM, medium dated
+        strike_20 = latest_spy * 0.80
+        price_20_6m = price_otm_put(latest_spy, strike_20, 0.5, RISK_FREE_RATE, latest_vix)
+        contracts_20 = budget / (price_20_6m * 100)
+        comparison.append({
+            'Strategy': '20% OTM, 6M (Balanced)',
+            'Strike': f"${strike_20:.2f}",
+            'Price per Contract': f"${price_20_6m:.2f}",
+            'Contracts Affordable': f"{contracts_20:.1f}",
+            'Total Notional': f"${strike_20 * contracts_20 * 100:,.0f}",
+            'Roll Frequency': '2x per year'
+        })
+        
+        # Strategy 3: Closer OTM, long dated
+        strike_15 = latest_spy * 0.85
+        price_15_12m = price_otm_put(latest_spy, strike_15, 1.0, RISK_FREE_RATE, latest_vix)
+        contracts_15 = budget / (price_15_12m * 100)
+        comparison.append({
+            'Strategy': '15% OTM, 12M (Conservative)',
+            'Strike': f"${strike_15:.2f}",
+            'Price per Contract': f"${price_15_12m:.2f}",
+            'Contracts Affordable': f"{contracts_15:.1f}",
+            'Total Notional': f"${strike_15 * contracts_15 * 100:,.0f}",
+            'Roll Frequency': '1x per year'
+        })
+        
+        st.dataframe(pd.DataFrame(comparison), hide_index=True, use_container_width=True)
+        
+        st.markdown("""
+        **Key Insights:**
+        - **Deeper OTM** = More contracts for same budget, but further from current price
+        - **Shorter expiry** = Cheaper per contract, but more frequent rolling
+        - **Taleb's approach**: Maximize convexity with deep OTM, accept higher roll costs
+        - **Traditional approach**: Balance between cost, protection level, and roll frequency
+        """)
+    
+    st.markdown("---")
+    st.header("📉 Market Analysis - Last 30 Days")
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=3, cols=1,
+        subplot_titles=('SPY Price', 'VIX Index', 'Adjusted Implied Volatility'),
+        vertical_spacing=0.1,
+        row_heights=[0.33, 0.33, 0.34]
+    )
+    
+    # SPY Price
+    fig.add_trace(
+        go.Scatter(x=data.index, y=data['SPY'], name='SPY', 
+                  line=dict(color='blue', width=2)),
+        row=1, col=1
+    )
+    
+    # VIX
+    fig.add_trace(
+        go.Scatter(x=data.index, y=data['VIX'], name='VIX',
+                  line=dict(color='orange', width=2)),
+        row=2, col=1
+    )
+    
+    # Adjusted IV with thresholds
+    fig.add_trace(
+        go.Scatter(x=data.index, y=data['Adj_IV'], name='Adj IV',
+                  line=dict(color='purple', width=2)),
+        row=3, col=1
+    )
+    
+    # Add threshold lines
+    fig.add_hline(y=IV_BUY_THRESHOLD_NORMAL*100, line_dash="dash", line_color="green",
+                 annotation_text="Buy (20%)", row=3, col=1)
+    fig.add_hline(y=IV_BUY_THRESHOLD_RELAXED*100, line_dash="dash", line_color="lightgreen",
+                 annotation_text="Buy Relaxed (40%)", row=3, col=1)
+    fig.add_hline(y=IV_SELL_THRESHOLD*100, line_dash="dash", line_color="red",
+                 annotation_text="Sell (60%)", row=3, col=1)
+    
+    # Update layout
+    fig.update_xaxes(title_text="Date", row=3, col=1)
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="VIX", row=2, col=1)
+    fig.update_yaxes(title_text="Adj IV (%)", row=3, col=1)
+    
+    fig.update_layout(height=900, showlegend=True, hovermode='x unified')
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Data table
+    with st.expander("📋 View Detailed Data"):
+        display_data = data[['SPY', 'VIX', 'Adj_IV', 'Strike', 'Put_Price']].copy()
+        display_data.columns = ['SPY Price', 'VIX', 'Adj IV (%)', 'Strike Price', 'Put Price']
+        st.dataframe(display_data.tail(20).sort_index(ascending=False), use_container_width=True)
+
+else:
+    st.error("Unable to fetch market data. Please try again later.")
 
 # Footer
 st.markdown("---")
 st.markdown("""
+### Strategy Overview
+- **Normal Buy**: Adjusted IV ≤ 20% (always)
+- **Relaxed Buy**: Adjusted IV ≤ 40% (only if 7+ days since last position expired)
+- **Sell**: Adjusted IV ≥ 60% (volatility spike)
+- **Strike**: 20% OTM
+- **Expiry**: 180 days
+
 *This is for educational purposes only. Not financial advice.*
 """)
