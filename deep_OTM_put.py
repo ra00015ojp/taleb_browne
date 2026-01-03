@@ -452,24 +452,89 @@ else:
     st.markdown("### Tail Risk Hedging Strategy Recommendation System")
     st.markdown("---")
     
-    # Fetch data
+    # Fetch data with improved error handling
     @st.cache_data(ttl=3600)
     def fetch_market_data(start, end):
+        """Fetch market data with robust error handling"""
         try:
-            spy = yf.download('SPY', start=start, end=end, auto_adjust=False, progress=False)['Adj Close']
-            vix = yf.download('^VIX', start=start, end=end, auto_adjust=False, progress=False)['Close']
+            st.write("Attempting to fetch SPY data...")
             
-            if isinstance(spy, pd.DataFrame): spy = spy.squeeze()
-            if isinstance(vix, pd.DataFrame): vix = vix.squeeze()
+            # Method 1: Try with auto_adjust=True
+            try:
+                spy_data = yf.download('SPY', start=start, end=end, auto_adjust=True, progress=False)
+                if not spy_data.empty:
+                    spy = spy_data['Close'] if 'Close' in spy_data.columns else spy_data['Adj Close']
+                else:
+                    raise ValueError("SPY data is empty")
+            except Exception as e1:
+                st.warning(f"Method 1 failed: {e1}. Trying alternative...")
+                # Method 2: Try without auto_adjust
+                spy_data = yf.download('SPY', start=start, end=end, auto_adjust=False, progress=False)
+                spy = spy_data['Adj Close'] if 'Adj Close' in spy_data.columns else spy_data['Close']
             
-            data = pd.DataFrame({'SPY': spy, 'VIX': vix}).dropna()
+            if isinstance(spy, pd.DataFrame):
+                spy = spy.squeeze()
+            
+            st.write(f"✓ SPY data fetched: {len(spy)} rows")
+            
+            # Fetch VIX
+            st.write("Attempting to fetch VIX data...")
+            try:
+                vix_data = yf.download('^VIX', start=start, end=end, progress=False)
+                if not vix_data.empty:
+                    vix = vix_data['Close'] if 'Close' in vix_data.columns else vix_data['Adj Close']
+                else:
+                    raise ValueError("VIX data is empty")
+            except Exception as e2:
+                st.warning(f"VIX fetch failed: {e2}. Using synthetic VIX...")
+                # Create synthetic VIX based on SPY volatility if VIX fails
+                returns = spy.pct_change().dropna()
+                rolling_vol = returns.rolling(window=20).std() * np.sqrt(252) * 100
+                vix = rolling_vol
+            
+            if isinstance(vix, pd.DataFrame):
+                vix = vix.squeeze()
+            
+            st.write(f"✓ VIX data fetched: {len(vix)} rows")
+            
+            # Combine and clean data
+            data = pd.DataFrame({'SPY': spy, 'VIX': vix})
+            data = data.dropna()
+            
+            if len(data) == 0:
+                raise ValueError("No data available after cleaning")
+            
+            st.write(f"✓ Final dataset: {len(data)} rows from {data.index[0].date()} to {data.index[-1].date()}")
+            
             return data
+            
         except Exception as e:
-            st.error(f"Error fetching data: {e}")
+            st.error(f"Error fetching data: {str(e)}")
+            st.error("Detailed error information:")
+            st.code(str(e))
+            
+            # Try to provide helpful debugging info
+            import sys
+            st.write("Python version:", sys.version)
+            st.write("Pandas version:", pd.__version__)
+            try:
+                st.write("yfinance version:", yf.__version__)
+            except:
+                st.write("yfinance version: Unknown")
+            
             return None
     
     with st.spinner("Fetching market data..."):
-        data = fetch_market_data(start_date, end_date)
+        # Add debug expander
+        with st.expander("🔍 Data Fetch Debug Info", expanded=False):
+            data = fetch_market_data(start_date, end_date)
+    
+    # If data fetch failed, try with a simpler date range
+    if data is None or len(data) == 0:
+        st.warning("Initial fetch failed. Trying with last 7 days only...")
+        start_date_short = end_date - datetime.timedelta(days=7)
+        with st.expander("🔍 Retry Debug Info", expanded=False):
+            data = fetch_market_data(start_date_short, end_date)
     
     if data is not None and len(data) > 0:
         # Calculate adjusted IV for each day
