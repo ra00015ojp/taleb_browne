@@ -58,8 +58,8 @@ IV_SELL_THRESHOLD = 0.6
 DAYS_AFTER_EXPIRY_RELAXED = 7
 
 # Title and description
-st.title("📊 Browne Portfolio with an Hedge")
-st.markdown("### Tail Risk Hedging Strategy Recommendation System (Educational Only)")
+st.title("📊 Browne Portfolio Put Option Advisor")
+st.markdown("### Tail Risk Hedging Strategy Recommendation System")
 st.markdown("---")
 
 # Sidebar for user inputs
@@ -342,6 +342,360 @@ if data is not None and len(data) > 0:
             st.plotly_chart(fig_pos, use_container_width=True)
     
     # Visualization
+    # Option Strategy Matrix Analysis
+    st.markdown("---")
+    st.header("🎲 Option Strategy Matrix - Strike vs Expiry Analysis")
+    st.markdown("*Compare different OTM depths and expiration dates to find optimal tail hedge*")
+    
+    # Define comparison parameters
+    otm_levels = [0.15, 0.20, 0.25, 0.30]  # 15%, 20%, 25%, 30% OTM
+    expiry_months = [3, 6, 9, 12]  # months
+    
+    # Calculate matrix
+    matrix_data = []
+    
+    for otm in otm_levels:
+        row_data = {'OTM %': f"{otm*100:.0f}%"}
+        strike = latest_spy * (1 - otm)
+        
+        for months in expiry_months:
+            days = months * 30
+            T = days / 365
+            put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+            adj_iv = get_skewed_implied_vol(latest_spy, strike, latest_vix, T)
+            
+            row_data[f'{months}M'] = put_price
+            row_data[f'{months}M_IV'] = adj_iv
+            row_data[f'{months}M_Strike'] = strike
+        
+        matrix_data.append(row_data)
+    
+    # Create tabs for different views
+    tab1, tab2, tab3, tab4 = st.tabs(["💵 Price Matrix", "📊 Cost Analysis", "📈 Heatmaps", "💡 Recommendations"])
+    
+    with tab1:
+        st.markdown("### Option Prices by Strike and Expiry")
+        st.markdown("*Prices shown per contract (multiply by 100 for total cost)*")
+        
+        # Create price comparison table
+        price_df = pd.DataFrame(matrix_data)
+        price_display = price_df[['OTM %', '3M', '6M', '9M', '12M']].copy()
+        
+        # Format as currency
+        for col in ['3M', '6M', '9M', '12M']:
+            price_display[col] = price_display[col].apply(lambda x: f"${x:.2f}")
+        
+        st.dataframe(price_display, use_container_width=True, hide_index=True)
+        
+        # Annual cost comparison
+        st.markdown("### 💰 Annual Cost Comparison Strategies")
+        st.markdown("*Compare rolling strategies: buying multiple short-term vs fewer long-term options*")
+        
+        annual_strategies = []
+        
+        for otm in otm_levels:
+            strike = latest_spy * (1 - otm)
+            strategy_row = {'OTM %': f"{otm*100:.0f}%", 'Strike': f"${strike:.2f}"}
+            
+            # Strategy 1: Roll 3M options (buy 4 times per year)
+            price_3m = price_otm_put(latest_spy, strike, 0.25, RISK_FREE_RATE, latest_vix)
+            strategy_row['4x 3M (Roll Quarterly)'] = f"${price_3m * 4:.2f}"
+            
+            # Strategy 2: Roll 6M options (buy 2 times per year)
+            price_6m = price_otm_put(latest_spy, strike, 0.5, RISK_FREE_RATE, latest_vix)
+            strategy_row['2x 6M (Roll Semi-Annual)'] = f"${price_6m * 2:.2f}"
+            
+            # Strategy 3: Buy 12M once
+            price_12m = price_otm_put(latest_spy, strike, 1.0, RISK_FREE_RATE, latest_vix)
+            strategy_row['1x 12M (Annual)'] = f"${price_12m:.2f}"
+            
+            # Calculate most economical
+            costs = [price_3m * 4, price_6m * 2, price_12m]
+            min_cost = min(costs)
+            strategies = ['Roll Quarterly', 'Roll Semi-Annual', 'Annual']
+            best = strategies[costs.index(min_cost)]
+            strategy_row['Most Economical'] = best
+            strategy_row['Savings vs Worst'] = f"${max(costs) - min_cost:.2f}"
+            
+            annual_strategies.append(strategy_row)
+        
+        annual_df = pd.DataFrame(annual_strategies)
+        st.dataframe(annual_df, use_container_width=True, hide_index=True)
+    
+    with tab2:
+        st.markdown("### Cost Efficiency Analysis")
+        
+        # Create cost per dollar of protection analysis
+        cost_efficiency = []
+        
+        for otm in otm_levels:
+            strike = latest_spy * (1 - otm)
+            otm_label = f"{otm*100:.0f}%"
+            
+            for months in expiry_months:
+                days = months * 30
+                T = days / 365
+                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+                
+                # Max profit if SPY goes to 0
+                max_profit = strike
+                # Cost per dollar of max protection
+                cost_efficiency_ratio = put_price / max_profit
+                # Annualized cost
+                annual_cost = put_price * (12 / months)
+                
+                cost_efficiency.append({
+                    'OTM': otm_label,
+                    'Expiry': f'{months}M',
+                    'Strike': strike,
+                    'Put Price': put_price,
+                    'Max Profit': max_profit,
+                    'Cost per $1 Protection': cost_efficiency_ratio,
+                    'Annualized Cost': annual_cost
+                })
+        
+        efficiency_df = pd.DataFrame(cost_efficiency)
+        
+        # Show metrics
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Cheapest Options (by absolute price)")
+            cheapest = efficiency_df.nsmallest(5, 'Put Price')[['OTM', 'Expiry', 'Put Price', 'Strike']]
+            cheapest['Put Price'] = cheapest['Put Price'].apply(lambda x: f"${x:.2f}")
+            cheapest['Strike'] = cheapest['Strike'].apply(lambda x: f"${x:.2f}")
+            st.dataframe(cheapest, hide_index=True)
+        
+        with col2:
+            st.markdown("#### Most Efficient (cost per $1 protection)")
+            most_efficient = efficiency_df.nsmallest(5, 'Cost per $1 Protection')[['OTM', 'Expiry', 'Cost per $1 Protection', 'Put Price']]
+            most_efficient['Cost per $1 Protection'] = most_efficient['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
+            most_efficient['Put Price'] = most_efficient['Put Price'].apply(lambda x: f"${x:.2f}")
+            st.dataframe(most_efficient, hide_index=True)
+        
+        # Full table
+        st.markdown("#### Complete Efficiency Analysis")
+        display_eff = efficiency_df.copy()
+        display_eff['Strike'] = display_eff['Strike'].apply(lambda x: f"${x:.2f}")
+        display_eff['Put Price'] = display_eff['Put Price'].apply(lambda x: f"${x:.2f}")
+        display_eff['Max Profit'] = display_eff['Max Profit'].apply(lambda x: f"${x:.2f}")
+        display_eff['Cost per $1 Protection'] = display_eff['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
+        display_eff['Annualized Cost'] = display_eff['Annualized Cost'].apply(lambda x: f"${x:.2f}")
+        st.dataframe(display_eff, use_container_width=True, hide_index=True)
+    
+    with tab3:
+        st.markdown("### Visual Comparison Heatmaps")
+        
+        # Prepare data for heatmaps
+        price_matrix = []
+        iv_matrix = []
+        annual_cost_matrix = []
+        
+        for otm in otm_levels:
+            price_row = []
+            iv_row = []
+            annual_row = []
+            strike = latest_spy * (1 - otm)
+            
+            for months in expiry_months:
+                days = months * 30
+                T = days / 365
+                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+                adj_iv = get_skewed_implied_vol(latest_spy, strike, latest_vix, T)
+                annual_cost = put_price * (12 / months)
+                
+                price_row.append(put_price)
+                iv_row.append(adj_iv * 100)
+                annual_row.append(annual_cost)
+            
+            price_matrix.append(price_row)
+            iv_matrix.append(iv_row)
+            annual_cost_matrix.append(annual_row)
+        
+        # Create heatmaps
+        otm_labels = [f"{int(otm*100)}% OTM" for otm in otm_levels]
+        expiry_labels = [f"{m} Months" for m in expiry_months]
+        
+        fig_heat = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=('Put Prices ($)', 'Adjusted IV (%)', 'Annualized Cost ($)'),
+            horizontal_spacing=0.15
+        )
+        
+        # Price heatmap
+        fig_heat.add_trace(
+            go.Heatmap(
+                z=price_matrix,
+                x=expiry_labels,
+                y=otm_labels,
+                colorscale='Greens',
+                text=[[f'${val:.2f}' for val in row] for row in price_matrix],
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                showscale=True,
+                colorbar=dict(x=0.28)
+            ),
+            row=1, col=1
+        )
+        
+        # IV heatmap
+        fig_heat.add_trace(
+            go.Heatmap(
+                z=iv_matrix,
+                x=expiry_labels,
+                y=otm_labels,
+                colorscale='Blues',
+                text=[[f'{val:.1f}%' for val in row] for row in iv_matrix],
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                showscale=True,
+                colorbar=dict(x=0.63)
+            ),
+            row=1, col=2
+        )
+        
+        # Annual cost heatmap
+        fig_heat.add_trace(
+            go.Heatmap(
+                z=annual_cost_matrix,
+                x=expiry_labels,
+                y=otm_labels,
+                colorscale='Reds',
+                text=[[f'${val:.2f}' for val in row] for row in annual_cost_matrix],
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                showscale=True,
+                colorbar=dict(x=0.98)
+            ),
+            row=1, col=3
+        )
+        
+        fig_heat.update_layout(height=400)
+        st.plotly_chart(fig_heat, use_container_width=True)
+        
+        # 3D surface plot
+        st.markdown("### 3D Price Surface")
+        
+        fig_3d = go.Figure(data=[go.Surface(
+            z=price_matrix,
+            x=expiry_months,
+            y=[otm*100 for otm in otm_levels],
+            colorscale='Viridis',
+            showscale=True
+        )])
+        
+        fig_3d.update_layout(
+            title='Put Option Prices: OTM % vs Expiry',
+            scene=dict(
+                xaxis_title='Months to Expiry',
+                yaxis_title='OTM %',
+                zaxis_title='Price ($)',
+            ),
+            height=600
+        )
+        
+        st.plotly_chart(fig_3d, use_container_width=True)
+    
+    with tab4:
+        st.markdown("### 💡 Strategy Recommendations")
+        
+        # Taleb/Universa style recommendation
+        st.markdown("#### 🎯 Tail Risk Hedge (Taleb/Universa Style)")
+        st.info("""
+        **Deep OTM Puts for Convexity:**
+        - Universa typically uses 25-30% OTM puts for maximum convexity
+        - Cheaper upfront cost allows for more contracts
+        - Massive asymmetric payoff during tail events
+        - Accept high theta decay for extreme downside protection
+        """)
+        
+        # Find the cheapest deep OTM option
+        deep_otm = [0.25, 0.30]
+        taleb_options = []
+        
+        for otm in deep_otm:
+            strike = latest_spy * (1 - otm)
+            for months in [3, 6]:
+                T = months * 30 / 365
+                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+                annual_cost = put_price * (12 / months)
+                
+                taleb_options.append({
+                    'OTM': f"{otm*100:.0f}%",
+                    'Expiry': f"{months}M",
+                    'Strike': f"${strike:.2f}",
+                    'Price': f"${put_price:.2f}",
+                    'Annual Cost (Rolling)': f"${annual_cost:.2f}"
+                })
+        
+        st.dataframe(pd.DataFrame(taleb_options), hide_index=True)
+        
+        # Balanced approach
+        st.markdown("#### ⚖️ Balanced Approach")
+        st.success("""
+        **Moderate OTM with Regular Rolling:**
+        - 20% OTM strikes balance cost and protection
+        - 6-month expiry reduces roll frequency
+        - More likely to profit in moderate corrections
+        - Good for typical portfolio hedging
+        """)
+        
+        # Cost comparison
+        st.markdown("#### 💵 Example: $800 Hedge Budget")
+        
+        budget = 800
+        
+        comparison = []
+        
+        # Strategy 1: Deep OTM, short dated
+        strike_30 = latest_spy * 0.70
+        price_30_3m = price_otm_put(latest_spy, strike_30, 0.25, RISK_FREE_RATE, latest_vix)
+        contracts_30 = budget / (price_30_3m * 100)
+        comparison.append({
+            'Strategy': '30% OTM, 3M (Taleb Style)',
+            'Strike': f"${strike_30:.2f}",
+            'Price per Contract': f"${price_30_3m:.2f}",
+            'Contracts Affordable': f"{contracts_30:.1f}",
+            'Total Notional': f"${strike_30 * contracts_30 * 100:,.0f}",
+            'Roll Frequency': '4x per year'
+        })
+        
+        # Strategy 2: Moderate OTM, medium dated
+        strike_20 = latest_spy * 0.80
+        price_20_6m = price_otm_put(latest_spy, strike_20, 0.5, RISK_FREE_RATE, latest_vix)
+        contracts_20 = budget / (price_20_6m * 100)
+        comparison.append({
+            'Strategy': '20% OTM, 6M (Balanced)',
+            'Strike': f"${strike_20:.2f}",
+            'Price per Contract': f"${price_20_6m:.2f}",
+            'Contracts Affordable': f"{contracts_20:.1f}",
+            'Total Notional': f"${strike_20 * contracts_20 * 100:,.0f}",
+            'Roll Frequency': '2x per year'
+        })
+        
+        # Strategy 3: Closer OTM, long dated
+        strike_15 = latest_spy * 0.85
+        price_15_12m = price_otm_put(latest_spy, strike_15, 1.0, RISK_FREE_RATE, latest_vix)
+        contracts_15 = budget / (price_15_12m * 100)
+        comparison.append({
+            'Strategy': '15% OTM, 12M (Conservative)',
+            'Strike': f"${strike_15:.2f}",
+            'Price per Contract': f"${price_15_12m:.2f}",
+            'Contracts Affordable': f"{contracts_15:.1f}",
+            'Total Notional': f"${strike_15 * contracts_15 * 100:,.0f}",
+            'Roll Frequency': '1x per year'
+        })
+        
+        st.dataframe(pd.DataFrame(comparison), hide_index=True, use_container_width=True)
+        
+        st.markdown("""
+        **Key Insights:**
+        - **Deeper OTM** = More contracts for same budget, but further from current price
+        - **Shorter expiry** = Cheaper per contract, but more frequent rolling
+        - **Taleb's approach**: Maximize convexity with deep OTM, accept higher roll costs
+        - **Traditional approach**: Balance between cost, protection level, and roll frequency
+        """)
+    
     st.markdown("---")
     st.header("📉 Market Analysis - Last 30 Days")
     
