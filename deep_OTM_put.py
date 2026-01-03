@@ -385,7 +385,7 @@ if data is not None and len(data) > 0:
         for col in ['3M', '6M', '9M', '12M']:
             price_display[col] = price_display[col].apply(lambda x: f"${x:.2f}")
         
-        st.dataframe(price_display, use_container_width=True, hide_index=True)
+        st.table(price_display)
         
         # Annual cost comparison
         st.markdown("### 💰 Annual Cost Comparison Strategies")
@@ -420,7 +420,7 @@ if data is not None and len(data) > 0:
             annual_strategies.append(strategy_row)
         
         annual_df = pd.DataFrame(annual_strategies)
-        st.dataframe(annual_df, use_container_width=True, hide_index=True)
+        st.table(annual_df)
     
     with tab2:
         st.markdown("### Cost Efficiency Analysis")
@@ -461,17 +461,17 @@ if data is not None and len(data) > 0:
         
         with col1:
             st.markdown("#### Cheapest Options (by absolute price)")
-            cheapest = efficiency_df.nsmallest(5, 'Put Price')[['OTM', 'Expiry', 'Put Price', 'Strike']]
+            cheapest = efficiency_df.nsmallest(5, 'Put Price')[['OTM', 'Expiry', 'Put Price', 'Strike']].copy()
             cheapest['Put Price'] = cheapest['Put Price'].apply(lambda x: f"${x:.2f}")
             cheapest['Strike'] = cheapest['Strike'].apply(lambda x: f"${x:.2f}")
-            st.dataframe(cheapest, hide_index=True)
+            st.table(cheapest)
         
         with col2:
             st.markdown("#### Most Efficient (cost per $1 protection)")
-            most_efficient = efficiency_df.nsmallest(5, 'Cost per $1 Protection')[['OTM', 'Expiry', 'Cost per $1 Protection', 'Put Price']]
+            most_efficient = efficiency_df.nsmallest(5, 'Cost per $1 Protection')[['OTM', 'Expiry', 'Cost per $1 Protection', 'Put Price']].copy()
             most_efficient['Cost per $1 Protection'] = most_efficient['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
             most_efficient['Put Price'] = most_efficient['Put Price'].apply(lambda x: f"${x:.2f}")
-            st.dataframe(most_efficient, hide_index=True)
+            st.table(most_efficient)
         
         # Full table
         st.markdown("#### Complete Efficiency Analysis")
@@ -481,7 +481,7 @@ if data is not None and len(data) > 0:
         display_eff['Max Profit'] = display_eff['Max Profit'].apply(lambda x: f"${x:.2f}")
         display_eff['Cost per $1 Protection'] = display_eff['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
         display_eff['Annualized Cost'] = display_eff['Annualized Cost'].apply(lambda x: f"${x:.2f}")
-        st.dataframe(display_eff, use_container_width=True, hide_index=True)
+        st.table(display_eff)
     
     with tab3:
         st.markdown("### Visual Comparison Heatmaps")
@@ -628,7 +628,7 @@ if data is not None and len(data) > 0:
                     'Annual Cost (Rolling)': f"${annual_cost:.2f}"
                 })
         
-        st.dataframe(pd.DataFrame(taleb_options), hide_index=True)
+        st.dataframe(pd.DataFrame(taleb_options), hide_index=True, use_container_width=True)
         
         # Balanced approach
         st.markdown("#### ⚖️ Balanced Approach")
@@ -686,7 +686,7 @@ if data is not None and len(data) > 0:
             'Roll Frequency': '1x per year'
         })
         
-        st.dataframe(pd.DataFrame(comparison), hide_index=True, use_container_width=True)
+        st.table(pd.DataFrame(comparison))
         
         st.markdown("""
         **Key Insights:**
@@ -750,7 +750,7 @@ if data is not None and len(data) > 0:
     with st.expander("📋 View Detailed Data"):
         display_data = data[['SPY', 'VIX', 'Adj_IV', 'Strike', 'Put_Price']].copy()
         display_data.columns = ['SPY Price', 'VIX', 'Adj IV (%)', 'Strike Price', 'Put Price']
-        st.dataframe(display_data.tail(20).sort_index(ascending=False), use_container_width=True)
+        st.table(display_data.tail(20).sort_index(ascending=False))
 
 else:
     st.error("Unable to fetch market data. Please try again later.")
