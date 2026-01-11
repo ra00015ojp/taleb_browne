@@ -66,6 +66,19 @@ st.markdown("---")
 with st.sidebar:
     st.header("⚙️ Configuration")
     
+    # Asset Selection
+    st.markdown("### 📊 Select Asset")
+    selected_asset = st.radio(
+        "Choose asset for put option analysis:",
+        options=["SPY (S&P 500)", "GLD (Gold)"],
+        index=0,
+        help="SPY for equity protection, GLD for inflation/crisis hedge"
+    )
+    
+    # Parse selection
+    asset_ticker = selected_asset.split(" ")[0]  # Get "SPY" or "GLD"
+    asset_name = "S&P 500" if asset_ticker == "SPY" else "Gold"
+    
     # Date range (1 month max)
     end_date = datetime.date.today()
     start_date = end_date - datetime.timedelta(days=30)
@@ -95,17 +108,17 @@ with st.sidebar:
             max_value=end_date
         )
         entry_spy_price = st.number_input(
-            "SPY Price at Entry ($)",
-            min_value=100.0,
+            f"{asset_ticker} Price at Entry ($)",
+            min_value=10.0 if asset_ticker == "GLD" else 100.0,
             max_value=1000.0,
-            value=580.0,
+            value=220.0 if asset_ticker == "GLD" else 580.0,
             step=1.0
         )
         entry_strike = st.number_input(
             "Strike Price ($)",
-            min_value=100.0,
+            min_value=10.0 if asset_ticker == "GLD" else 100.0,
             max_value=1000.0,
-            value=464.0,
+            value=176.0 if asset_ticker == "GLD" else 464.0,
             step=1.0
         )
         entry_price = st.number_input(
@@ -126,23 +139,23 @@ with st.sidebar:
 
 # Fetch data
 @st.cache_data(ttl=3600)
-def fetch_market_data(start, end):
+def fetch_market_data(start, end, asset):
     try:
-        spy = yf.download('SPY', start=start, end=end, auto_adjust=False, progress=False)['Adj Close']
+        asset_data = yf.download(asset, start=start, end=end, auto_adjust=False, progress=False)['Adj Close']
         vix = yf.download('^VIX', start=start, end=end, auto_adjust=False, progress=False)['Close']
         
-        if isinstance(spy, pd.DataFrame): spy = spy.squeeze()
+        if isinstance(asset_data, pd.DataFrame): asset_data = asset_data.squeeze()
         if isinstance(vix, pd.DataFrame): vix = vix.squeeze()
         
-        data = pd.DataFrame({'SPY': spy, 'VIX': vix}).dropna()
+        data = pd.DataFrame({asset: asset_data, 'VIX': vix}).dropna()
         return data
     except Exception as e:
         st.error(f"Error fetching data: {e}")
         return None
 
 # Main content
-with st.spinner("Fetching market data..."):
-    data = fetch_market_data(start_date, end_date)
+with st.spinner(f"Fetching {asset_name} market data..."):
+    data = fetch_market_data(start_date, end_date, asset_ticker)
 
 if data is not None and len(data) > 0:
     # Calculate adjusted IV for each day
@@ -151,7 +164,7 @@ if data is not None and len(data) > 0:
     put_prices = []
     
     for idx, row in data.iterrows():
-        S = row['SPY']
+        S = row[asset_ticker]
         vix = row['VIX']
         strike = S * (1 - OTM_PERCENT)
         adj_iv = get_skewed_implied_vol(S, strike, vix, TIME_TO_EXPIRY)
@@ -167,18 +180,18 @@ if data is not None and len(data) > 0:
     
     # Current market conditions
     latest_date = data.index[-1]
-    latest_spy = data['SPY'].iloc[-1]
+    latest_price = data[asset_ticker].iloc[-1]
     latest_vix = data['VIX'].iloc[-1]
     latest_adj_iv = data['Adj_IV'].iloc[-1]
     latest_strike = data['Strike'].iloc[-1]
     latest_put_price = data['Put_Price'].iloc[-1]
     
     # Display current market conditions
-    st.header("📈 Current Market Conditions")
+    st.header(f"📈 Current Market Conditions - {asset_name}")
     col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        st.metric("SPY Price", f"${latest_spy:.2f}")
+        st.metric(f"{asset_ticker} Price", f"${latest_price:.2f}")
     with col2:
         st.metric("VIX", f"{latest_vix:.2f}")
     with col3:
@@ -206,7 +219,7 @@ if data is not None and len(data) > 0:
             st.success("✅ **BUY NOW** - Adjusted IV is below 20% threshold!")
             st.markdown(f"""
             ### Recommended Action
-            - **Action**: Buy SPY Put Options
+            - **Action**: Buy {asset_ticker} Put Options
             - **Strike**: ${latest_strike:.2f} (20% OTM)
             - **Expiry**: {TIME_TO_EXPIRY_DAYS} days
             - **Estimated Cost**: ${latest_put_price:.2f} per contract
@@ -243,7 +256,7 @@ if data is not None and len(data) > 0:
             st.markdown("#### Normal Buy Signals (IV ≤ 20%)")
             if len(buy_normal) > 0:
                 for idx, row in buy_normal.tail(5).iterrows():
-                    st.write(f"- {idx.date()}: IV={row['Adj_IV']:.1f}%, SPY=${row['SPY']:.2f}, Put=${row['Put_Price']:.2f}")
+                    st.write(f"- {idx.date()}: IV={row['Adj_IV']:.1f}%, {asset_ticker}=${row[asset_ticker]:.2f}, Put=${row['Put_Price']:.2f}")
             else:
                 st.write("No opportunities in the last 30 days")
         
@@ -251,7 +264,7 @@ if data is not None and len(data) > 0:
             st.markdown("#### Relaxed Buy Signals (IV ≤ 40%)")
             if len(buy_relaxed) > 0:
                 for idx, row in buy_relaxed.tail(5).iterrows():
-                    st.write(f"- {idx.date()}: IV={row['Adj_IV']:.1f}%, SPY=${row['SPY']:.2f}, Put=${row['Put_Price']:.2f}")
+                    st.write(f"- {idx.date()}: IV={row['Adj_IV']:.1f}%, {asset_ticker}=${row[asset_ticker]:.2f}, Put=${row['Put_Price']:.2f}")
             else:
                 st.write("No opportunities in the last 30 days")
     
@@ -262,8 +275,8 @@ if data is not None and len(data) > 0:
         days_held = (latest_date.date() - entry_date).days
         time_left = max((TIME_TO_EXPIRY_DAYS - days_held) / 365, 0.001)
         
-        current_put_price = price_otm_put(latest_spy, entry_strike, time_left, RISK_FREE_RATE, latest_vix)
-        current_adj_iv = get_skewed_implied_vol(latest_spy, entry_strike, latest_vix, time_left)
+        current_put_price = price_otm_put(latest_price, entry_strike, time_left, RISK_FREE_RATE, latest_vix)
+        current_adj_iv = get_skewed_implied_vol(latest_price, entry_strike, latest_vix, time_left)
         
         profit_loss = current_put_price - entry_price
         profit_loss_pct = (profit_loss / entry_price) * 100
@@ -317,7 +330,7 @@ if data is not None and len(data) > 0:
         for idx, row in data[data.index >= pd.Timestamp(entry_date)].iterrows():
             days_from_entry = (idx.date() - entry_date).days
             time_remaining = max((TIME_TO_EXPIRY_DAYS - days_from_entry) / 365, 0.001)
-            pos_price = price_otm_put(row['SPY'], entry_strike, time_remaining, RISK_FREE_RATE, row['VIX'])
+            pos_price = price_otm_put(row[asset_ticker], entry_strike, time_remaining, RISK_FREE_RATE, row['VIX'])
             position_values.append(pos_price)
             position_dates.append(idx)
         
@@ -344,7 +357,7 @@ if data is not None and len(data) > 0:
     # Visualization
     # Option Strategy Matrix Analysis
     st.markdown("---")
-    st.header("🎲 Option Strategy Matrix - Strike vs Expiry Analysis")
+    st.header(f"🎲 Option Strategy Matrix - {asset_name} Put Options")
     st.markdown("*Compare different OTM depths and expiration dates to find optimal tail hedge*")
     
     # Define comparison parameters
@@ -356,13 +369,13 @@ if data is not None and len(data) > 0:
     
     for otm in otm_levels:
         row_data = {'OTM %': f"{otm*100:.0f}%"}
-        strike = latest_spy * (1 - otm)
+        strike = latest_price * (1 - otm)
         
         for months in expiry_months:
             days = months * 30
             T = days / 365
-            put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
-            adj_iv = get_skewed_implied_vol(latest_spy, strike, latest_vix, T)
+            put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
+            adj_iv = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
             
             row_data[f'{months}M'] = put_price
             row_data[f'{months}M_IV'] = adj_iv
@@ -394,19 +407,19 @@ if data is not None and len(data) > 0:
         annual_strategies = []
         
         for otm in otm_levels:
-            strike = latest_spy * (1 - otm)
+            strike = latest_price * (1 - otm)
             strategy_row = {'OTM %': f"{otm*100:.0f}%", 'Strike': f"${strike:.2f}"}
             
             # Strategy 1: Roll 3M options (buy 4 times per year)
-            price_3m = price_otm_put(latest_spy, strike, 0.25, RISK_FREE_RATE, latest_vix)
+            price_3m = price_otm_put(latest_price, strike, 0.25, RISK_FREE_RATE, latest_vix)
             strategy_row['4x 3M (Roll Quarterly)'] = f"${price_3m * 4:.2f}"
             
             # Strategy 2: Roll 6M options (buy 2 times per year)
-            price_6m = price_otm_put(latest_spy, strike, 0.5, RISK_FREE_RATE, latest_vix)
+            price_6m = price_otm_put(latest_price, strike, 0.5, RISK_FREE_RATE, latest_vix)
             strategy_row['2x 6M (Roll Semi-Annual)'] = f"${price_6m * 2:.2f}"
             
             # Strategy 3: Buy 12M once
-            price_12m = price_otm_put(latest_spy, strike, 1.0, RISK_FREE_RATE, latest_vix)
+            price_12m = price_otm_put(latest_price, strike, 1.0, RISK_FREE_RATE, latest_vix)
             strategy_row['1x 12M (Annual)'] = f"${price_12m:.2f}"
             
             # Calculate most economical
@@ -429,13 +442,13 @@ if data is not None and len(data) > 0:
         cost_efficiency = []
         
         for otm in otm_levels:
-            strike = latest_spy * (1 - otm)
+            strike = latest_price * (1 - otm)
             otm_label = f"{otm*100:.0f}%"
             
             for months in expiry_months:
                 days = months * 30
                 T = days / 365
-                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+                put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
                 
                 # Max profit if SPY goes to 0
                 max_profit = strike
@@ -495,13 +508,13 @@ if data is not None and len(data) > 0:
             price_row = []
             iv_row = []
             annual_row = []
-            strike = latest_spy * (1 - otm)
+            strike = latest_price * (1 - otm)
             
             for months in expiry_months:
                 days = months * 30
                 T = days / 365
-                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
-                adj_iv = get_skewed_implied_vol(latest_spy, strike, latest_vix, T)
+                put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
+                adj_iv = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
                 annual_cost = put_price * (12 / months)
                 
                 price_row.append(put_price)
@@ -614,10 +627,10 @@ if data is not None and len(data) > 0:
         taleb_options = []
         
         for otm in deep_otm:
-            strike = latest_spy * (1 - otm)
+            strike = latest_price * (1 - otm)
             for months in [3, 6]:
                 T = months * 30 / 365
-                put_price = price_otm_put(latest_spy, strike, T, RISK_FREE_RATE, latest_vix)
+                put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
                 annual_cost = put_price * (12 / months)
                 
                 taleb_options.append({
@@ -648,8 +661,8 @@ if data is not None and len(data) > 0:
         comparison = []
         
         # Strategy 1: Deep OTM, short dated
-        strike_30 = latest_spy * 0.70
-        price_30_3m = price_otm_put(latest_spy, strike_30, 0.25, RISK_FREE_RATE, latest_vix)
+        strike_30 = latest_price * 0.70
+        price_30_3m = price_otm_put(latest_price, strike_30, 0.25, RISK_FREE_RATE, latest_vix)
         contracts_30 = budget / (price_30_3m * 100)
         comparison.append({
             'Strategy': '30% OTM, 3M (Taleb Style)',
@@ -661,8 +674,8 @@ if data is not None and len(data) > 0:
         })
         
         # Strategy 2: Moderate OTM, medium dated
-        strike_20 = latest_spy * 0.80
-        price_20_6m = price_otm_put(latest_spy, strike_20, 0.5, RISK_FREE_RATE, latest_vix)
+        strike_20 = latest_price * 0.80
+        price_20_6m = price_otm_put(latest_price, strike_20, 0.5, RISK_FREE_RATE, latest_vix)
         contracts_20 = budget / (price_20_6m * 100)
         comparison.append({
             'Strategy': '20% OTM, 6M (Balanced)',
@@ -674,8 +687,8 @@ if data is not None and len(data) > 0:
         })
         
         # Strategy 3: Closer OTM, long dated
-        strike_15 = latest_spy * 0.85
-        price_15_12m = price_otm_put(latest_spy, strike_15, 1.0, RISK_FREE_RATE, latest_vix)
+        strike_15 = latest_price * 0.85
+        price_15_12m = price_otm_put(latest_price, strike_15, 1.0, RISK_FREE_RATE, latest_vix)
         contracts_15 = budget / (price_15_12m * 100)
         comparison.append({
             'Strategy': '15% OTM, 12M (Conservative)',
@@ -697,19 +710,19 @@ if data is not None and len(data) > 0:
         """)
     
     st.markdown("---")
-    st.header("📉 Market Analysis - Last 30 Days")
+    st.header(f"📉 Market Analysis - {asset_name} Last 30 Days")
     
     # Create subplots
     fig = make_subplots(
         rows=3, cols=1,
-        subplot_titles=('SPY Price', 'VIX Index', 'Adjusted Implied Volatility'),
+        subplot_titles=(f'{asset_ticker} Price', 'VIX Index', 'Adjusted Implied Volatility'),
         vertical_spacing=0.1,
         row_heights=[0.33, 0.33, 0.34]
     )
     
-    # SPY Price
+    # Asset Price
     fig.add_trace(
-        go.Scatter(x=data.index, y=data['SPY'], name='SPY', 
+        go.Scatter(x=data.index, y=data[asset_ticker], name=asset_ticker, 
                   line=dict(color='blue', width=2)),
         row=1, col=1
     )
@@ -748,8 +761,8 @@ if data is not None and len(data) > 0:
     
     # Data table
     with st.expander("📋 View Detailed Data"):
-        display_data = data[['SPY', 'VIX', 'Adj_IV', 'Strike', 'Put_Price']].copy()
-        display_data.columns = ['SPY Price', 'VIX', 'Adj IV (%)', 'Strike Price', 'Put Price']
+        display_data = data[[asset_ticker, 'VIX', 'Adj_IV', 'Strike', 'Put_Price']].copy()
+        display_data.columns = [f'{asset_ticker} Price', 'VIX', 'Adj IV (%)', 'Strike Price', 'Put Price']
         st.table(display_data.tail(20).sort_index(ascending=False))
 
 else:
