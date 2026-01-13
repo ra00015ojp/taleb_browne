@@ -19,8 +19,8 @@ last_refresh = current_time.strftime("%B %d, %Y at %I:%M %p %Z")
 
 # Display refresh info at the very top
 st.markdown(f"""
-<div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-    <p style="margin: 0; text-align: center;">
+<div style="background-color: #1f77b4; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 2px solid #0d47a1;">
+    <p style="margin: 0; text-align: center; color: white; font-size: 16px; font-weight: 500;">
         🕐 <b>Last Data Refresh:</b> {last_refresh} | 
         <b>Auto-refresh:</b> Every 3 hours | 
         <b>Market Data:</b> Real-time from Yahoo Finance
