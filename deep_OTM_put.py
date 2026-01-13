@@ -11,7 +11,7 @@ import time
 st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
 
 # Auto-refresh every 3 hours (10800 seconds)
-REFRESH_INTERVAL = 10800
+REFRESH_INTERVAL = 3600
 
 # Get current time for display
 current_time = datetime.datetime.now()
@@ -22,7 +22,7 @@ st.markdown(f"""
 <div style="background-color: #1f77b4; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 2px solid #0d47a1;">
     <p style="margin: 0; text-align: center; color: white; font-size: 16px; font-weight: 500;">
         🕐 <b>Last Data Refresh:</b> {last_refresh} | 
-        <b>Auto-refresh:</b> Every 3 hours | 
+        <b>Auto-refresh:</b> Every hour | 
         <b>Market Data:</b> Real-time from Yahoo Finance
     </p>
 </div>
