@@ -6,8 +6,37 @@ from scipy.stats import norm
 import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import time
 
 st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
+
+# Auto-refresh every 3 hours (10800 seconds)
+REFRESH_INTERVAL = 10800
+
+# Get current time for display
+current_time = datetime.datetime.now()
+last_refresh = current_time.strftime("%B %d, %Y at %I:%M %p %Z")
+
+# Display refresh info at the very top
+st.markdown(f"""
+<div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+    <p style="margin: 0; text-align: center;">
+        🕐 <b>Last Data Refresh:</b> {last_refresh} | 
+        <b>Auto-refresh:</b> Every 3 hours | 
+        <b>Market Data:</b> Real-time from Yahoo Finance
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# Auto-refresh mechanism
+if 'last_refresh_time' not in st.session_state:
+    st.session_state.last_refresh_time = time.time()
+
+# Check if 3 hours have passed
+time_elapsed = time.time() - st.session_state.last_refresh_time
+if time_elapsed >= REFRESH_INTERVAL:
+    st.session_state.last_refresh_time = time.time()
+    st.rerun()
 
 # Black-Scholes for Put Option Pricing
 def black_scholes_put(S, K, T, r, sigma):
@@ -136,9 +165,23 @@ with st.sidebar:
     st.metric("Sell Threshold", f"{IV_SELL_THRESHOLD*100:.0f}%")
     st.metric("OTM Percentage", f"{OTM_PERCENT*100:.0f}%")
     st.metric("Days to Expiry", f"{TIME_TO_EXPIRY_DAYS}")
+    
+    st.markdown("---")
+    
+    # Manual refresh button
+    if st.button("🔄 Force Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state.last_refresh_time = time.time()
+        st.rerun()
+    
+    # Show time until next auto-refresh
+    time_until_refresh = REFRESH_INTERVAL - time_elapsed
+    hours_left = int(time_until_refresh // 3600)
+    minutes_left = int((time_until_refresh % 3600) // 60)
+    st.caption(f"⏱️ Next auto-refresh in: {hours_left}h {minutes_left}m")
 
 # Fetch data
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=REFRESH_INTERVAL)  # Cache for 3 hours
 def fetch_market_data(start, end, asset):
     try:
         asset_data = yf.download(asset, start=start, end=end, auto_adjust=False, progress=False)['Adj Close']
