@@ -8,19 +8,36 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
-@st.cache_data(ttl=60)  # cache only 60 seconds for live data
-def fetch_live_price(ticker):
-    """Fetch real-time last price using 1-minute intraday data."""
+@st.cache_data(ttl=300)
+def fetch_market_data(start, end, asset):
     try:
-        t = yf.Ticker(ticker)
-        hist = t.history(period="1d", interval="1m")
-        if hist.empty:
-            return None, None
-        last_price = hist['Close'].iloc[-1]
-        last_time  = hist.index[-1]
-        return float(last_price), last_time
-    except Exception:
-        return None, None
+        # Flatten MultiIndex columns with multi_level_index=False (yfinance 0.2.31+)
+        asset_df = yf.download(
+            asset, start=start, end=end,
+            auto_adjust=True, progress=False,
+            multi_level_index=False   # ← flattens to single-level columns
+        )
+        vix_df = yf.download(
+            '^VIX', start=start, end=end,
+            auto_adjust=True, progress=False,
+            multi_level_index=False
+        )
+
+        # auto_adjust=True renames 'Adj Close' → 'Close'
+        asset_series = asset_df['Close'].squeeze()
+        vix_series   = vix_df['Close'].squeeze()
+
+        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series}).dropna()
+
+        if data.empty:
+            st.error("Data fetched but empty — market may be closed or date range invalid.")
+            return None
+
+        return data
+
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return None
 
 st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
 
