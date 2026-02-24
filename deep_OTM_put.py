@@ -8,29 +8,44 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
+@st.cache_data(ttl=60)
+def fetch_live_price(ticker):
+    """Fetch real-time last price using 1-minute intraday data."""
+    try:
+        hist = yf.Ticker(ticker).history(period="1d", interval="1m")
+        if hist is None or hist.empty:
+            return None, None
+        # history() always returns single-level columns — safe on all versions
+        last_price = float(hist['Close'].iloc[-1])
+        last_time  = hist.index[-1]
+        return last_price, last_time
+    except Exception as e:
+        st.warning(f"Live price fetch failed for {ticker}: {e}")
+        return None, None
+
+
 @st.cache_data(ttl=300)
 def fetch_market_data(start, end, asset):
     try:
-        # Flatten MultiIndex columns with multi_level_index=False (yfinance 0.2.31+)
-        asset_df = yf.download(
-            asset, start=start, end=end,
-            auto_adjust=True, progress=False,
-            multi_level_index=False   # ← flattens to single-level columns
-        )
-        vix_df = yf.download(
-            '^VIX', start=start, end=end,
-            auto_adjust=True, progress=False,
-            multi_level_index=False
-        )
+        # Use Ticker.history() instead of yf.download() — avoids ALL MultiIndex issues
+        asset_hist = yf.Ticker(asset).history(start=str(start), end=str(end), interval="1d")
+        vix_hist   = yf.Ticker('^VIX').history(start=str(start), end=str(end), interval="1d")
 
-        # auto_adjust=True renames 'Adj Close' → 'Close'
-        asset_series = asset_df['Close'].squeeze()
-        vix_series   = vix_df['Close'].squeeze()
+        if asset_hist.empty or vix_hist.empty:
+            st.error("No data returned. Market may be closed or ticker invalid.")
+            return None
+
+        # .history() returns timezone-aware index — normalize to date only for alignment
+        asset_hist.index = asset_hist.index.normalize()
+        vix_hist.index   = vix_hist.index.normalize()
+
+        asset_series = asset_hist['Close'].squeeze()
+        vix_series   = vix_hist['Close'].squeeze()
 
         data = pd.DataFrame({asset: asset_series, 'VIX': vix_series}).dropna()
 
         if data.empty:
-            st.error("Data fetched but empty — market may be closed or date range invalid.")
+            st.error("Data aligned but empty — check date range.")
             return None
 
         return data
