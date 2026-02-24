@@ -8,6 +8,20 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
+@st.cache_data(ttl=60)  # cache only 60 seconds for live data
+def fetch_live_price(ticker):
+    """Fetch real-time last price using 1-minute intraday data."""
+    try:
+        t = yf.Ticker(ticker)
+        hist = t.history(period="1d", interval="1m")
+        if hist.empty:
+            return None, None
+        last_price = hist['Close'].iloc[-1]
+        last_time  = hist.index[-1]
+        return float(last_price), last_time
+    except Exception:
+        return None, None
+
 st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
 
 # Auto-refresh every 3 hours (10800 seconds)
@@ -109,8 +123,8 @@ with st.sidebar:
     asset_name = "S&P 500" if asset_ticker == "SPY" else "Gold"
     
     # Date range (1 month max)
-    end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=30)
+    end_date = datetime.date.today() + datetime.timedelta(days=1)   # make end exclusive → includes today
+    start_date = end_date - datetime.timedelta(days=31)
     
     st.info(f"📅 Analysis Period: {start_date} to {end_date}")
     
@@ -222,9 +236,13 @@ if data is not None and len(data) > 0:
     data['Put_Price'] = put_prices
     
     # Current market conditions
-    latest_date = data.index[-1]
-    latest_price = data[asset_ticker].iloc[-1]
-    latest_vix = data['VIX'].iloc[-1]
+    live_price, live_time = fetch_live_price(asset_ticker)
+    live_vix,   _         = fetch_live_price('^VIX')
+    latest_date  = data.index[-1]
+    latest_price = live_price  if live_price else data[asset_ticker].iloc[-1]
+    latest_vix   = live_vix    if live_vix   else data['VIX'].iloc[-1]
+    if live_time:
+        st.caption(f"⚡ Live price as of {live_time.strftime('%I:%M %p ET')}")
     latest_adj_iv = data['Adj_IV'].iloc[-1]
     latest_strike = data['Strike'].iloc[-1]
     latest_put_price = data['Put_Price'].iloc[-1]
