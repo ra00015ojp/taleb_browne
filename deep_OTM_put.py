@@ -14,6 +14,9 @@ st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wid
 def fetch_live_price(ticker):
     """Fetch real-time last price using 1-minute intraday data."""
     try:
+        import time as time_module
+        time_module.sleep(0.3)  # Small delay to avoid rate limiting
+        
         hist = yf.Ticker(ticker).history(period="1d", interval="1m")
         if hist is None or hist.empty:
             return None, None
@@ -21,7 +24,7 @@ def fetch_live_price(ticker):
         last_time  = hist.index[-1]
         return last_price, last_time
     except Exception as e:
-        st.warning(f"Live price fetch failed for {ticker}: {e}")
+        # Silently fail for live prices - not critical
         return None, None
 
 # Auto-refresh every hour
@@ -136,9 +139,9 @@ with st.sidebar:
     asset_ticker = selected_asset.split(" ")[0]  # Get "SPY", "GLD", or "FEZ"
     asset_name = {"SPY": "S&P 500", "GLD": "Gold", "FEZ": "Euro Stoxx 50"}[asset_ticker]
     
-    # Date range (1 month max)
-    end_date = datetime.date.today() + datetime.timedelta(days=1)
-    start_date = end_date - datetime.timedelta(days=31)
+    # Date range (1 month max) - use today, not tomorrow
+    end_date = datetime.date.today()
+    start_date = end_date - datetime.timedelta(days=30)
     
     st.info(f"📅 Analysis Period: {start_date} to {end_date}")
     
@@ -212,33 +215,59 @@ with st.sidebar:
     minutes_left = int((time_until_refresh % 3600) // 60)
     st.caption(f"⏱️ Next auto-refresh in: {hours_left}h {minutes_left}m")
 
-# Fetch data
+# Fetch data with better error handling and rate limit protection
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_market_data(start, end, asset):
     try:
-        asset_hist = yf.Ticker(asset).history(start=str(start), end=str(end), interval="1d")
-        vix_hist   = yf.Ticker('^VIX').history(start=str(start), end=str(end), interval="1d")
+        # Add small delay to avoid rate limiting
+        import time as time_module
+        time_module.sleep(0.5)
+        
+        # Convert dates to strings for yfinance
+        start_str = start.strftime('%Y-%m-%d')
+        end_str = (end + datetime.timedelta(days=1)).strftime('%Y-%m-%d')  # yfinance end is exclusive
+        
+        # Use Ticker.history() for better reliability
+        asset_ticker = yf.Ticker(asset)
+        vix_ticker = yf.Ticker('^VIX')
+        
+        asset_hist = asset_ticker.history(start=start_str, end=end_str, interval="1d")
+        vix_hist = vix_ticker.history(start=start_str, end=end_str, interval="1d")
 
-        if asset_hist.empty or vix_hist.empty:
-            st.error("No data returned. Market may be closed or ticker invalid.")
+        if asset_hist.empty:
+            st.error(f"No data returned for {asset}. Market may be closed or ticker invalid.")
             return None
+            
+        if vix_hist.empty:
+            st.warning("No VIX data returned. Using asset data only.")
+            # Create dummy VIX data if needed
+            vix_hist = asset_hist.copy()
+            vix_hist['Close'] = 20.0  # Default VIX value
 
-        asset_hist.index = asset_hist.index.normalize()
-        vix_hist.index   = vix_hist.index.normalize()
+        # Normalize index to date only (remove time component)
+        asset_hist.index = pd.to_datetime(asset_hist.index).normalize()
+        vix_hist.index = pd.to_datetime(vix_hist.index).normalize()
 
-        asset_series = asset_hist['Close'].squeeze()
-        vix_series   = vix_hist['Close'].squeeze()
+        # Extract close prices
+        asset_series = asset_hist['Close']
+        vix_series = vix_hist['Close']
 
-        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series}).dropna()
+        # Combine into dataframe
+        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series})
+        
+        # Forward fill missing values (for different trading calendars)
+        data = data.fillna(method='ffill').dropna()
 
         if data.empty:
-            st.error("Data aligned but empty — check date range.")
+            st.error(f"Data aligned but empty. Start: {start_str}, End: {end_str}")
+            st.info(f"Asset data points: {len(asset_hist)}, VIX data points: {len(vix_hist)}")
             return None
 
         return data
 
     except Exception as e:
         st.error(f"Error fetching data: {e}")
+        st.info("Try clicking 'Force Refresh Data' or wait a moment before retrying.")
         return None
 
 # Main content
