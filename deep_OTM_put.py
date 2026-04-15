@@ -818,8 +818,8 @@ with col5:
         display_data.columns = [f'{asset_ticker} Price', 'VIX', 'Adj IV (%)', 'Strike Price', 'Put Price']
         st.table(display_data.tail(20).sort_index(ascending=False))
 
-else:
-    st.error("Unable to fetch market data. Please try again later.")
+    else:
+        st.error("Unable to fetch market data. Please try again later.")
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Footer
