@@ -7,293 +7,253 @@ import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
+import pytz
 
-@st.cache_data(ttl=60)
-def fetch_live_price(ticker):
-    """Fetch real-time last price using 1-minute intraday data."""
+st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
+
+# ====================== HELPER FUNCTIONS ======================
+
+def is_market_open(ticker: str) -> bool:
+    """Simple check if US or European market is likely open (for live data decision)."""
+    now = datetime.datetime.now(pytz.utc)
+    if ticker in ["SPY", "^VIX"]:
+        # US Eastern Time (NYSE)
+        tz = pytz.timezone("US/Eastern")
+        local = now.astimezone(tz)
+        weekday = local.weekday()
+        if weekday >= 5:  # Weekend
+            return False
+        market_open = local.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = local.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= local <= market_close
+    elif ticker == "FEZ":
+        # European markets (approx CET/CEST)
+        tz = pytz.timezone("Europe/Paris")
+        local = now.astimezone(tz)
+        weekday = local.weekday()
+        if weekday >= 5:
+            return False
+        market_open = local.replace(hour=9, minute=0, second=0, microsecond=0)
+        market_close = local.replace(hour=17, minute=30, second=0, microsecond=0)
+        return market_open <= local <= market_close
+    return False
+
+
+@st.cache_data(ttl=30)  # Short TTL for live price - or remove cache entirely if you prefer
+def fetch_live_price(ticker: str):
+    """Fetch real-time last price using 1-minute intraday data with timezone handling."""
     try:
-        hist = yf.Ticker(ticker).history(period="1d", interval="1m")
-        if hist is None or hist.empty:
+        time.sleep(0.3)  # Avoid rate limiting
+
+        hist = yf.Ticker(ticker).history(period="5d", interval="1m")  # Slightly longer to be safe
+
+        if hist.empty:
             return None, None
-        # history() always returns single-level columns — safe on all versions
+
         last_price = float(hist['Close'].iloc[-1])
-        last_time  = hist.index[-1]
+        last_time = hist.index[-1]
+
+        # If market is closed and we only have old data, force previous day if needed
         return last_price, last_time
     except Exception as e:
         st.warning(f"Live price fetch failed for {ticker}: {e}")
         return None, None
 
 
-@st.cache_data(ttl=300)
-def fetch_market_data(start, end, asset):
-    try:
-        # Use Ticker.history() instead of yf.download() — avoids ALL MultiIndex issues
-        asset_hist = yf.Ticker(asset).history(start=str(start), end=str(end), interval="1d")
-        vix_hist   = yf.Ticker('^VIX').history(start=str(start), end=str(end), interval="1d")
+def get_previous_trading_day() -> datetime.date:
+    """Return the most recent trading day (handles weekends/holidays roughly)."""
+    today = datetime.date.today()
+    for i in range(5):  # Max look back 5 days
+        candidate = today - datetime.timedelta(days=i)
+        if candidate.weekday() < 5:  # Mon-Fri
+            return candidate
+    return today - datetime.timedelta(days=1)
 
-        if asset_hist.empty or vix_hist.empty:
-            st.error("No data returned. Market may be closed or ticker invalid.")
+
+@st.cache_data(ttl=3600)  # 1 hour for daily data
+def fetch_market_data(start: datetime.date, end: datetime.date, asset: str):
+    """Fetch daily historical data with better error handling."""
+    try:
+        start_str = start.strftime('%Y-%m-%d')
+        end_str = (end + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+
+        asset_hist = yf.Ticker(asset).history(start=start_str, end=end_str, interval="1d")
+        vix_hist = yf.Ticker('^VIX').history(start=start_str, end=end_str, interval="1d")
+
+        if asset_hist.empty:
+            st.error(f"No data for {asset}. Market may be closed.")
             return None
 
-        # .history() returns timezone-aware index — normalize to date only for alignment
-        asset_hist.index = asset_hist.index.normalize()
-        vix_hist.index   = vix_hist.index.normalize()
+        # Normalize index to date only
+        asset_hist.index = pd.to_datetime(asset_hist.index).normalize()
+        vix_hist.index = pd.to_datetime(vix_hist.index).normalize()
 
-        asset_series = asset_hist['Close'].squeeze()
-        vix_series   = vix_hist['Close'].squeeze()
-
-        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series}).dropna()
+        data = pd.DataFrame({
+            asset: asset_hist['Close'],
+            'VIX': vix_hist['Close']
+        }).dropna()
 
         if data.empty:
-            st.error("Data aligned but empty — check date range.")
+            st.error("Aligned data is empty after merging.")
             return None
 
         return data
-
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"Error fetching market data: {e}")
         return None
 
-st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
 
-# Auto-refresh every 3 hours (10800 seconds)
-REFRESH_INTERVAL = 3600
+# ====================== BLACK-SCHOLES & STRATEGY LOGIC ======================
 
-# Get current time for display
-current_time = datetime.datetime.now()
-last_refresh = current_time.strftime("%B %d, %Y at %I:%M %p %Z")
-
-# Display refresh info at the very top
-st.markdown(f"""
-<div style="background-color: #1f77b4; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 2px solid #0d47a1;">
-    <p style="margin: 0; text-align: center; color: white; font-size: 16px; font-weight: 500;">
-        🕐 <b>Last Data Refresh:</b> {last_refresh} | 
-        <b>Auto-refresh:</b> Every hour | 
-        <b>Market Data:</b> Real-time from Yahoo Finance
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-# Auto-refresh mechanism
-if 'last_refresh_time' not in st.session_state:
-    st.session_state.last_refresh_time = time.time()
-
-# Check if 3 hours have passed
-time_elapsed = time.time() - st.session_state.last_refresh_time
-if time_elapsed >= REFRESH_INTERVAL:
-    st.session_state.last_refresh_time = time.time()
-    st.rerun()
-
-# Black-Scholes for Put Option Pricing
 def black_scholes_put(S, K, T, r, sigma):
     if T <= 0:
         return max(K - S, 0)
-    
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
-    
-    put_price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-    return put_price
+    return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+
 
 def get_skewed_implied_vol(S, K, vix, T):
     base_iv = vix / 100
     moneyness = K / S
-    
-    if vix < 15:
-        skew_slope = 2.5
-    elif vix < 25:
-        skew_slope = 3.0
-    elif vix < 40:
-        skew_slope = 3.5
-    else:
-        skew_slope = 4.0
-    
+    skew_slope = 2.5 if vix < 15 else 3.0 if vix < 25 else 3.5 if vix < 40 else 4.0
     otm_percent = 1 - moneyness
     skew_multiplier = 1 + (skew_slope * otm_percent)
     time_adjustment = 1 + (0.3 * (1 - min(T * 365 / 180, 1)))
     adjusted_iv = base_iv * skew_multiplier * time_adjustment
-    
-    min_iv = max(0.15, base_iv * 0.8)
-    adjusted_iv = max(adjusted_iv, min_iv)
-    
-    return adjusted_iv
+    return max(adjusted_iv, max(0.15, base_iv * 0.8))
+
 
 def price_otm_put(S, K, T, r, vix):
     adjusted_iv = get_skewed_implied_vol(S, K, vix, T)
     return black_scholes_put(S, K, T, r, adjusted_iv)
 
-# Strategy parameters
-OTM_PERCENT = 0.20
-TIME_TO_EXPIRY_DAYS = 180
-TIME_TO_EXPIRY = TIME_TO_EXPIRY_DAYS / 365
-RISK_FREE_RATE = 0.02
-IV_BUY_THRESHOLD_NORMAL = 0.2
-IV_BUY_THRESHOLD_RELAXED = 0.4
-IV_SELL_THRESHOLD = 0.6
-DAYS_AFTER_EXPIRY_RELAXED = 7
 
-# Title and description
+def calculate_convexity(S, K, T, r, vix):
+    epsilon = 0.01 * S
+    put_price = price_otm_put(S, K, T, r, vix)
+    put_up = price_otm_put(S + epsilon, K, T, r, vix)
+    put_down = price_otm_put(S - epsilon, K, T, r, vix)
+    convexity = (put_up - 2 * put_price + put_down) / (epsilon ** 2)
+    return abs(convexity) / put_price if put_price > 0 else 0
+
+
+# ====================== STREAMLIT APP ======================
+
 st.title("📊 Browne Portfolio Put Option Advisor")
 st.markdown("### Tail Risk Hedging Strategy Recommendation System")
 st.markdown("---")
 
-# Sidebar for user inputs
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
-    
-    # Asset Selection
+
     st.markdown("### 📊 Select Asset")
     selected_asset = st.radio(
         "Choose asset for put option analysis:",
-        options=["SPY (S&P 500)", "GLD (Gold)"],
+        options=["SPY (S&P 500)", "GLD (Gold)", "FEZ (Euro Stoxx 50)"],
         index=0,
-        help="SPY for equity protection, GLD for inflation/crisis hedge"
+        help="SPY for US equities, GLD for inflation/crisis hedge, FEZ for European equity exposure"
     )
-    
-    # Parse selection
-    asset_ticker = selected_asset.split(" ")[0]  # Get "SPY" or "GLD"
-    asset_name = "S&P 500" if asset_ticker == "SPY" else "Gold"
-    
-    # Date range (1 month max)
-    end_date = datetime.date.today() + datetime.timedelta(days=1)   # make end exclusive → includes today
+
+    asset_ticker = selected_asset.split(" ")[0]
+    asset_name = {"SPY": "S&P 500", "GLD": "Gold", "FEZ": "Euro Stoxx 50"}[asset_ticker]
+
+    # Date range (last ~30 days)
+    end_date = datetime.date.today() + datetime.timedelta(days=1)
     start_date = end_date - datetime.timedelta(days=31)
-    
-    st.info(f"📅 Analysis Period: {start_date} to {end_date}")
-    
-    st.markdown("---")
-    
-    # Do you currently have a put option?
-    has_position = st.radio(
-        "Do you currently have a put option position?",
-        options=["No", "Yes"],
-        index=0
-    )
-    
-    # If yes, ask for entry details
-    entry_date = None
-    entry_price = None
-    entry_strike = None
-    entry_spy_price = None
-    
+
+    st.info(f"📅 Analysis Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+
+    has_position = st.radio("Do you currently have a put option position?", ["No", "Yes"], index=0)
+
+    entry_date = entry_price = entry_strike = entry_asset_price = None
     if has_position == "Yes":
         st.markdown("#### Position Details")
-        entry_date = st.date_input(
-            "Entry Date",
-            value=end_date - datetime.timedelta(days=14),
-            max_value=end_date
-        )
-        entry_spy_price = st.number_input(
-            f"{asset_ticker} Price at Entry ($)",
-            min_value=10.0 if asset_ticker == "GLD" else 100.0,
-            max_value=1000.0,
-            value=220.0 if asset_ticker == "GLD" else 580.0,
-            step=1.0
-        )
-        entry_strike = st.number_input(
-            "Strike Price ($)",
-            min_value=10.0 if asset_ticker == "GLD" else 100.0,
-            max_value=1000.0,
-            value=176.0 if asset_ticker == "GLD" else 464.0,
-            step=1.0
-        )
-        entry_price = st.number_input(
-            "Entry Put Price ($)",
-            min_value=0.01,
-            max_value=100.0,
-            value=5.0,
-            step=0.1
-        )
-    
+        entry_date = st.date_input("Entry Date", value=end_date - datetime.timedelta(days=14), max_value=end_date)
+
+        default_prices = {"SPY": 580.0, "GLD": 220.0, "FEZ": 66.0}
+        default_strikes = {"SPY": 464.0, "GLD": 176.0, "FEZ": 52.8}
+
+        entry_asset_price = st.number_input(f"{asset_ticker} Price at Entry ($)", 
+                                            value=default_prices[asset_ticker], step=0.1)
+        entry_strike = st.number_input("Strike Price ($)", value=default_strikes[asset_ticker], step=0.1)
+        entry_price = st.number_input("Entry Put Price ($)", value=5.0, step=0.1)
+
     st.markdown("---")
-    st.markdown("#### Strategy Parameters")
-    st.metric("Buy Threshold (Normal)", f"{IV_BUY_THRESHOLD_NORMAL*100:.0f}%")
-    st.metric("Buy Threshold (Relaxed)", f"{IV_BUY_THRESHOLD_RELAXED*100:.0f}%")
-    st.metric("Sell Threshold", f"{IV_SELL_THRESHOLD*100:.0f}%")
-    st.metric("OTM Percentage", f"{OTM_PERCENT*100:.0f}%")
-    st.metric("Days to Expiry", f"{TIME_TO_EXPIRY_DAYS}")
-    
-    st.markdown("---")
-    
-    # Manual refresh button
-    if st.button("🔄 Force Refresh Data", use_container_width=True):
+    if st.button("🔄 Force Refresh All Data", use_container_width=True):
         st.cache_data.clear()
-        st.session_state.last_refresh_time = time.time()
         st.rerun()
-    
-    # Show time until next auto-refresh
-    time_until_refresh = REFRESH_INTERVAL - time_elapsed
-    hours_left = int(time_until_refresh // 3600)
-    minutes_left = int((time_until_refresh % 3600) // 60)
-    st.caption(f"⏱️ Next auto-refresh in: {hours_left}h {minutes_left}m")
+
+# Strategy constants
+OTM_PERCENT = 0.20
+TIME_TO_EXPIRY_DAYS = 180
+TIME_TO_EXPIRY = TIME_TO_EXPIRY_DAYS / 365.0
+RISK_FREE_RATE = 0.02
+IV_BUY_THRESHOLD_NORMAL = 0.20
+IV_BUY_THRESHOLD_RELAXED = 0.40
+IV_SELL_THRESHOLD = 0.60
 
 # Fetch data
-@st.cache_data(ttl=REFRESH_INTERVAL)  # Cache for 3 hours
-def fetch_market_data(start, end, asset):
-    try:
-        asset_data = yf.download(asset, start=start, end=end, auto_adjust=False, progress=False)['Adj Close']
-        vix = yf.download('^VIX', start=start, end=end, auto_adjust=False, progress=False)['Close']
-        
-        if isinstance(asset_data, pd.DataFrame): asset_data = asset_data.squeeze()
-        if isinstance(vix, pd.DataFrame): vix = vix.squeeze()
-        
-        data = pd.DataFrame({asset: asset_data, 'VIX': vix}).dropna()
-        return data
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return None
-
-# Main content
 with st.spinner(f"Fetching {asset_name} market data..."):
     data = fetch_market_data(start_date, end_date, asset_ticker)
 
-if data is not None and len(data) > 0:
-    # Calculate adjusted IV for each day
-    adj_ivs = []
-    strikes = []
-    put_prices = []
-    
-    for idx, row in data.iterrows():
-        S = row[asset_ticker]
-        vix = row['VIX']
-        strike = S * (1 - OTM_PERCENT)
-        adj_iv = get_skewed_implied_vol(S, strike, vix, TIME_TO_EXPIRY)
-        put_price = price_otm_put(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, vix)
-        
-        adj_ivs.append(adj_iv * 100)
-        strikes.append(strike)
-        put_prices.append(put_price)
-    
-    data['Adj_IV'] = adj_ivs
-    data['Strike'] = strikes
-    data['Put_Price'] = put_prices
-    
-    # Current market conditions
-    live_price, live_time = fetch_live_price(asset_ticker)
-    live_vix,   _         = fetch_live_price('^VIX')
-    latest_date  = data.index[-1]
-    latest_price = live_price  if live_price else data[asset_ticker].iloc[-1]
-    latest_vix   = live_vix    if live_vix   else data['VIX'].iloc[-1]
-    if live_time:
-        st.caption(f"⚡ Live price as of {live_time.strftime('%I:%M %p ET')}")
-    latest_adj_iv = data['Adj_IV'].iloc[-1]
-    latest_strike = data['Strike'].iloc[-1]
-    latest_put_price = data['Put_Price'].iloc[-1]
-    
-    # Display current market conditions
-    st.header(f"📈 Current Market Conditions - {asset_name}")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric(f"{asset_ticker} Price", f"${latest_price:.2f}")
-    with col2:
-        st.metric("VIX", f"{latest_vix:.2f}")
-    with col3:
-        st.metric("Adjusted IV", f"{latest_adj_iv:.1f}%")
-    with col4:
-        st.metric("Strike (20% OTM)", f"${latest_strike:.2f}")
-    with col5:
-        st.metric("Put Price", f"${latest_put_price:.2f}")
-    
+if data is None or len(data) == 0:
+    st.error("Unable to fetch market data. Please try the refresh button.")
+    st.stop()
+
+# Live prices with market-open awareness
+live_price, live_time = fetch_live_price(asset_ticker)
+live_vix, _ = fetch_live_price('^VIX')
+
+# Fallback to previous trading day if market is closed and live data looks stale
+if not is_market_open(asset_ticker) and live_price is None:
+    prev_day = get_previous_trading_day()
+    st.info(f"Market appears closed for {asset_ticker}. Using previous trading day data ({prev_day}).")
+
+latest_price = live_price if live_price is not None else data[asset_ticker].iloc[-1]
+latest_vix = live_vix if live_vix is not None else data['VIX'].iloc[-1]
+latest_date = data.index[-1]
+
+# Calculate adjusted IV, strike, and put price for historical + current
+adj_ivs, strikes, put_prices = [], [], []
+for idx, row in data.iterrows():
+    S = row[asset_ticker]
+    vix_val = row['VIX']
+    strike = S * (1 - OTM_PERCENT)
+    adj_iv = get_skewed_implied_vol(S, strike, vix_val, TIME_TO_EXPIRY) * 100
+    put_price = price_otm_put(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, vix_val)
+    adj_ivs.append(adj_iv)
+    strikes.append(strike)
+    put_prices.append(put_price)
+
+data['Adj_IV'] = adj_ivs
+data['Strike'] = strikes
+data['Put_Price'] = put_prices
+
+latest_adj_iv = data['Adj_IV'].iloc[-1]
+latest_strike = data['Strike'].iloc[-1]
+latest_put_price = data['Put_Price'].iloc[-1]
+
+if live_time:
+    st.caption(f"⚡ Live price as of {live_time.strftime('%Y-%m-%d %I:%M %p %Z')}")
+
+# Current market conditions
+st.header(f"📈 Current Market Conditions - {asset_name}")
+col1, col2, col3, col4, col5 = st.columns(5)
+with col1:
+    st.metric(f"{asset_ticker} Price", f"${latest_price:.2f}")
+with col2:
+    st.metric("VIX", f"{latest_vix:.2f}")
+with col3:
+    st.metric("Adjusted IV", f"{latest_adj_iv:.1f}%")
+with col4:
+    st.metric("Strike (20% OTM)", f"${latest_strike:.2f}")
+with col5:
+    st.metric("Put Price (est.)", f"${latest_put_price:.2f}")
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     st.markdown("---")
     
     # Recommendation logic
@@ -861,15 +821,14 @@ if data is not None and len(data) > 0:
 else:
     st.error("Unable to fetch market data. Please try again later.")
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Footer
 st.markdown("---")
 st.markdown("""
 ### Strategy Overview
-- **Normal Buy**: Adjusted IV ≤ 20% (always)
-- **Relaxed Buy**: Adjusted IV ≤ 40% (only if 7+ days since last position expired)
-- **Sell**: Adjusted IV ≥ 60% (volatility spike)
-- **Strike**: 20% OTM
-- **Expiry**: 180 days
-
-*This is for educational purposes only. Not financial advice.*
+- **Normal Buy**: Adjusted IV ≤ 20%  
+- **Relaxed Buy**: Adjusted IV ≤ 40% (after 7+ days)  
+- **Sell**: Adjusted IV ≥ 60%  
+- **Strike**: 20% OTM | **Expiry**: 180 days  
+*Educational tool only — not financial advice.*
 """)
