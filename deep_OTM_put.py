@@ -25,11 +25,28 @@ def fetch_live_price(ticker):
 @st.cache_data(ttl=300)
 def fetch_market_data(start, end, asset):
     try:
-        asset_hist = yf.Ticker(asset).history(start=str(start), end=str(end), interval="1d")
-        vix_hist   = yf.Ticker('^VIX').history(start=str(start), end=str(end), interval="1d")
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+        today = pd.Timestamp('today').normalize()
 
-        if asset_hist.empty or vix_hist.empty:
-            st.error("No data returned. Market may be closed or ticker invalid.")
+        if start_ts >= end_ts:
+            st.error("Invalid date range: start date must be before end date.")
+            return None
+
+        if end_ts > today + pd.Timedelta(days=1):
+            end_ts = today + pd.Timedelta(days=1)
+
+        asset_ticker = asset.upper()
+        asset_hist = yf.Ticker(asset_ticker).history(start=start_ts, end=end_ts, interval="1d")
+        vix_hist   = yf.Ticker('^VIX').history(start=start_ts, end=end_ts, interval="1d")
+
+        if asset_hist is None or asset_hist.empty or vix_hist is None or vix_hist.empty:
+            # Retry with a shorter recent window if the requested range returns no rows
+            asset_hist = yf.Ticker(asset_ticker).history(period="60d", interval="1d")
+            vix_hist   = yf.Ticker('^VIX').history(period="60d", interval="1d")
+
+        if asset_hist is None or asset_hist.empty or vix_hist is None or vix_hist.empty:
+            st.error("Unable to fetch market data for the selected ticker or date range.")
             return None
 
         asset_hist.index = asset_hist.index.normalize()
@@ -38,16 +55,21 @@ def fetch_market_data(start, end, asset):
         asset_series = asset_hist['Close'].squeeze()
         vix_series   = vix_hist['Close'].squeeze()
 
-        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series}).dropna()
+        data = pd.DataFrame({asset_ticker: asset_series, 'VIX': vix_series}).dropna()
 
         if data.empty:
-            st.error("Data aligned but empty — check date range.")
+            overlap_start = max(asset_series.index.min(), vix_series.index.min())
+            overlap_end = min(asset_series.index.max(), vix_series.index.max())
+            st.error(
+                f"Data aligned but empty — no overlapping trading days between {overlap_start.date()} and {overlap_end.date()}."
+            )
             return None
 
         return data
 
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error("Unable to fetch market data. Please try again later.")
+        st.error(str(e))
         return None
 
 
