@@ -132,8 +132,8 @@ with st.sidebar:
     asset_name = "S&P 500" if asset_ticker == "SPY" else "Gold"
     
     # Date range (1 month max)
-    end_date = datetime.date.today() + datetime.timedelta(days=1)
-    start_date = end_date - datetime.timedelta(days=31)
+    end_date = datetime.date.today()
+    start_date = end_date - datetime.timedelta(days=30)
     
     st.info(f"📅 Analysis Period: {start_date} to {end_date}")
     
@@ -221,8 +221,8 @@ def fetch_live_price(ticker):
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_market_data(start, end, asset):
     try:
-        asset_hist = yf.Ticker(asset).history(start=str(start), end=str(end), interval="1d")
-        vix_hist = yf.Ticker('^VIX').history(start=str(start), end=str(end), interval="1d")
+        asset_hist = yf.Ticker(asset).history(start=(start), end=(end), interval="1d")
+        vix_hist = yf.Ticker('^VIX').history(start=(start), end=(end), interval="1d")
 
         if asset_hist.empty or vix_hist.empty:
             st.error("No data returned. Market may be closed or ticker invalid.")
@@ -234,11 +234,11 @@ def fetch_market_data(start, end, asset):
         asset_series = asset_hist['Close'].squeeze()
         vix_series = vix_hist['Close'].squeeze()
 
-        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series}).dropna()
-
+        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series})
         if data.empty:
             st.error("Data aligned but empty — check date range.")
             return None
+        data = data.dropna()
 
         return data
 
