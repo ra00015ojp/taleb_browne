@@ -8,9 +8,55 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
+@st.cache_data(ttl=60)
+def fetch_live_price(ticker):
+    """Fetch real-time last price using 1-minute intraday data."""
+    try:
+        hist = yf.Ticker(ticker).history(period="1d", interval="1m")
+        if hist is None or hist.empty:
+            return None, None
+        # history() always returns single-level columns — safe on all versions
+        last_price = float(hist['Close'].iloc[-1])
+        last_time  = hist.index[-1]
+        return last_price, last_time
+    except Exception as e:
+        st.warning(f"Live price fetch failed for {ticker}: {e}")
+        return None, None
+
+
+@st.cache_data(ttl=300)
+def fetch_market_data(start, end, asset):
+    try:
+        # Use Ticker.history() instead of yf.download() — avoids ALL MultiIndex issues
+        asset_hist = yf.Ticker(asset).history(start=str(start), end=str(end), interval="1d")
+        vix_hist   = yf.Ticker('^VIX').history(start=str(start), end=str(end), interval="1d")
+
+        if asset_hist.empty or vix_hist.empty:
+            st.error("No data returned. Market may be closed or ticker invalid.")
+            return None
+
+        # .history() returns timezone-aware index — normalize to date only for alignment
+        asset_hist.index = asset_hist.index.normalize()
+        vix_hist.index   = vix_hist.index.normalize()
+
+        asset_series = asset_hist['Close'].squeeze()
+        vix_series   = vix_hist['Close'].squeeze()
+
+        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series}).dropna()
+
+        if data.empty:
+            st.error("Data aligned but empty — check date range.")
+            return None
+
+        return data
+
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return None
+
 st.set_page_config(page_title="Browne Portfolio Put Option Advisor", layout="wide")
 
-# Auto-refresh every hour
+# Auto-refresh every 3 hours (10800 seconds)
 REFRESH_INTERVAL = 3600
 
 # Get current time for display
@@ -32,45 +78,22 @@ st.markdown(f"""
 if 'last_refresh_time' not in st.session_state:
     st.session_state.last_refresh_time = time.time()
 
-# Check if 1 hour has passed
+# Check if 3 hours have passed
 time_elapsed = time.time() - st.session_state.last_refresh_time
 if time_elapsed >= REFRESH_INTERVAL:
     st.session_state.last_refresh_time = time.time()
     st.rerun()
 
-# Enhanced Black-Scholes with Greeks
-def black_scholes_put_with_greeks(S, K, T, r, sigma):
-    """Calculate put price and Greeks (Delta, Gamma, Theta, Vega)"""
+# Black-Scholes for Put Option Pricing
+def black_scholes_put(S, K, T, r, sigma):
     if T <= 0:
-        intrinsic = max(K - S, 0)
-        return {
-            'price': intrinsic,
-            'delta': -1.0 if S < K else 0.0,
-            'gamma': 0.0,
-            'theta': 0.0,
-            'vega': 0.0
-        }
+        return max(K - S, 0)
     
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
     
-    # Put price
     put_price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-    
-    # Greeks
-    delta = -norm.cdf(-d1)  # Put delta is negative
-    gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
-    theta = (-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T)) 
-             - r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365  # Daily theta
-    vega = S * norm.pdf(d1) * np.sqrt(T) / 100  # Vega per 1% change in IV
-    
-    return {
-        'price': put_price,
-        'delta': delta,
-        'gamma': gamma,
-        'theta': theta,
-        'vega': vega
-    }
+    return put_price
 
 def get_skewed_implied_vol(S, K, vix, T):
     base_iv = vix / 100
@@ -95,9 +118,9 @@ def get_skewed_implied_vol(S, K, vix, T):
     
     return adjusted_iv
 
-def price_otm_put_with_greeks(S, K, T, r, vix):
+def price_otm_put(S, K, T, r, vix):
     adjusted_iv = get_skewed_implied_vol(S, K, vix, T)
-    return black_scholes_put_with_greeks(S, K, T, r, adjusted_iv)
+    return black_scholes_put(S, K, T, r, adjusted_iv)
 
 # Strategy parameters
 OTM_PERCENT = 0.20
@@ -128,12 +151,12 @@ with st.sidebar:
     )
     
     # Parse selection
-    asset_ticker = selected_asset.split(" ")[0]
+    asset_ticker = selected_asset.split(" ")[0]  # Get "SPY" or "GLD"
     asset_name = "S&P 500" if asset_ticker == "SPY" else "Gold"
     
     # Date range (1 month max)
-    end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=30)
+    end_date = datetime.date.today() + datetime.timedelta(days=1)   # make end exclusive → includes today
+    start_date = end_date - datetime.timedelta(days=31)
     
     st.info(f"📅 Analysis Period: {start_date} to {end_date}")
     
@@ -204,51 +227,17 @@ with st.sidebar:
     st.caption(f"⏱️ Next auto-refresh in: {hours_left}h {minutes_left}m")
 
 # Fetch data
-@st.cache_data(ttl=60)
-def fetch_live_price(ticker):
-    """Fetch real-time last price using 1-minute intraday data."""
-    try:
-        hist = yf.Ticker(ticker).history(period="1d", interval="1m")
-        if hist is None or hist.empty:
-            return None, None
-        last_price = float(hist['Close'].iloc[-1])
-        last_time = hist.index[-1]
-        return last_price, last_time
-    except Exception as e:
-        st.warning(f"Live price fetch failed for {ticker}: {e}")
-        return None, None
-
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=REFRESH_INTERVAL)  # Cache for 3 hours
 def fetch_market_data(start, end, asset):
     try:
-        asset_hist = yf.Ticker(asset).history(start=(start), end=(end), interval="1d")
-        vix_hist = yf.Ticker('^VIX').history(start=(start), end=(end), interval="1d")
-
-        if asset_hist.empty:
-            st.warning(f"No {asset} data - retrying...")
-            asset_hist = yf.download(asset, start=start, end=end)['Close']
-            
-        if vix_hist.empty:
-            st.warning("No VIX data - retrying...")
-            vix_hist = yf.download('^VIX', start=start, end=end)['Close']
-            
-        if asset_hist.empty or vix_hist.empty:
-            return None
-
-        asset_hist.index = asset_hist.index.normalize()
-        vix_hist.index = vix_hist.index.normalize()
-
-        asset_series = asset_hist['Close'] if 'Close' in asset_hist else asset_hist.squeeze()
-        vix_series = vix_hist['Close'] if 'Close' in vix_hist else vix_hist.squeeze()
-
-        data = pd.DataFrame({asset: asset_series, 'VIX': vix_series})
-        if data.empty:
-            st.error("Data aligned but empty — check date range.")
-            return None
-        data = data.dropna()
-
+        asset_data = yf.download(asset, start=start, end=end, auto_adjust=False, progress=False)['Adj Close']
+        vix = yf.download('^VIX', start=start, end=end, auto_adjust=False, progress=False)['Close']
+        
+        if isinstance(asset_data, pd.DataFrame): asset_data = asset_data.squeeze()
+        if isinstance(vix, pd.DataFrame): vix = vix.squeeze()
+        
+        data = pd.DataFrame({asset: asset_data, 'VIX': vix}).dropna()
         return data
-
     except Exception as e:
         st.error(f"Error fetching data: {e}")
         return None
@@ -268,11 +257,11 @@ if data is not None and len(data) > 0:
         vix = row['VIX']
         strike = S * (1 - OTM_PERCENT)
         adj_iv = get_skewed_implied_vol(S, strike, vix, TIME_TO_EXPIRY)
-        greeks = price_otm_put_with_greeks(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, vix)
+        put_price = price_otm_put(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, vix)
         
         adj_ivs.append(adj_iv * 100)
         strikes.append(strike)
-        put_prices.append(greeks['price'])
+        put_prices.append(put_price)
     
     data['Adj_IV'] = adj_ivs
     data['Strike'] = strikes
@@ -280,10 +269,10 @@ if data is not None and len(data) > 0:
     
     # Current market conditions
     live_price, live_time = fetch_live_price(asset_ticker)
-    live_vix, _ = fetch_live_price('^VIX')
-    latest_date = data.index[-1]
-    latest_price = live_price if live_price else data[asset_ticker].iloc[-1]
-    latest_vix = live_vix if live_vix else data['VIX'].iloc[-1]
+    live_vix,   _         = fetch_live_price('^VIX')
+    latest_date  = data.index[-1]
+    latest_price = live_price  if live_price else data[asset_ticker].iloc[-1]
+    latest_vix   = live_vix    if live_vix   else data['VIX'].iloc[-1]
     if live_time:
         st.caption(f"⚡ Live price as of {live_time.strftime('%I:%M %p ET')}")
     latest_adj_iv = data['Adj_IV'].iloc[-1]
@@ -379,8 +368,7 @@ if data is not None and len(data) > 0:
         days_held = (latest_date.date() - entry_date).days
         time_left = max((TIME_TO_EXPIRY_DAYS - days_held) / 365, 0.001)
         
-        current_greeks = price_otm_put_with_greeks(latest_price, entry_strike, time_left, RISK_FREE_RATE, latest_vix)
-        current_put_price = current_greeks['price']
+        current_put_price = price_otm_put(latest_price, entry_strike, time_left, RISK_FREE_RATE, latest_vix)
         current_adj_iv = get_skewed_implied_vol(latest_price, entry_strike, latest_vix, time_left)
         
         profit_loss = current_put_price - entry_price
@@ -435,8 +423,8 @@ if data is not None and len(data) > 0:
         for idx, row in data[data.index >= pd.Timestamp(entry_date)].iterrows():
             days_from_entry = (idx.date() - entry_date).days
             time_remaining = max((TIME_TO_EXPIRY_DAYS - days_from_entry) / 365, 0.001)
-            pos_greeks = price_otm_put_with_greeks(row[asset_ticker], entry_strike, time_remaining, RISK_FREE_RATE, row['VIX'])
-            position_values.append(pos_greeks['price'])
+            pos_price = price_otm_put(row[asset_ticker], entry_strike, time_remaining, RISK_FREE_RATE, row['VIX'])
+            position_values.append(pos_price)
             position_dates.append(idx)
         
         if len(position_values) > 0:
@@ -459,172 +447,229 @@ if data is not None and len(data) > 0:
             )
             st.plotly_chart(fig_pos, use_container_width=True)
     
+    # Visualization
     # Option Strategy Matrix Analysis
     st.markdown("---")
     st.header(f"🎲 Option Strategy Matrix - {asset_name} Put Options")
     st.markdown("*Compare different OTM depths and expiration dates to find optimal tail hedge*")
     
     # Define comparison parameters
-    otm_levels = [0.15, 0.20, 0.25, 0.30]
-    expiry_months = [3, 6, 9, 12]
+    otm_levels = [0.15, 0.20, 0.25, 0.30]  # 15%, 20%, 25%, 30% OTM
+    expiry_months = [3, 6, 9, 12]  # months
     
-    # Calculate matrix with Greeks
+    # Calculate matrix
     matrix_data = []
     
     for otm in otm_levels:
+        row_data = {'OTM %': f"{otm*100:.0f}%"}
         strike = latest_price * (1 - otm)
         
         for months in expiry_months:
             days = months * 30
             T = days / 365
-            greeks = price_otm_put_with_greeks(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
+            put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
             adj_iv = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
             
-            # Calculate normalized metrics
-            normalized_price = greeks['price'] / strike
-            
-            # Convexity metric: (price * gamma) / (strike * |theta| * vega)
-            # Higher is better - want high gamma (convexity) relative to decay and vega
-            if abs(greeks['theta']) > 0.001 and greeks['vega'] > 0.001:
-                convexity_metric = (greeks['price'] * greeks['gamma']) / (strike * abs(greeks['theta']) * greeks['vega'])
-            else:
-                convexity_metric = 0
-            
-            matrix_data.append({
-                'OTM': f"{otm*100:.0f}%",
-                'Expiry': f"{months}M",
-                'Strike': strike,
-                'Price': greeks['price'],
-                'Delta': greeks['delta'],
-                'Gamma': greeks['gamma'],
-                'Theta': greeks['theta'],
-                'Vega': greeks['vega'],
-                'Adj_IV': adj_iv * 100,
-                'Normalized_Price': normalized_price,
-                'Convexity_Metric': convexity_metric
-            })
-    
-    matrix_df = pd.DataFrame(matrix_data)
+            row_data[f'{months}M'] = put_price
+            row_data[f'{months}M_IV'] = adj_iv
+            row_data[f'{months}M_Strike'] = strike
+        
+        matrix_data.append(row_data)
     
     # Create tabs for different views
-    tab1, tab2 = st.tabs(["📈 Heatmaps & Analysis", "💡 Recommendations"])
+    tab1, tab2, tab3, tab4 = st.tabs(["💵 Price Matrix", "📊 Cost Analysis", "📈 Heatmaps", "💡 Recommendations"])
     
     with tab1:
-        st.markdown("### 📊 Option Metrics Comparison")
+        st.markdown("### Option Prices by Strike and Expiry")
+        st.markdown("*Prices shown per contract (multiply by 100 for total cost)*")
         
-        # Find cheapest options by different metrics
+        # Create price comparison table
+        price_df = pd.DataFrame(matrix_data)
+        price_display = price_df[['OTM %', '3M', '6M', '9M', '12M']].copy()
+        
+        # Format as currency
+        for col in ['3M', '6M', '9M', '12M']:
+            price_display[col] = price_display[col].apply(lambda x: f"${x:.2f}")
+        
+        st.table(price_display)
+        
+        # Annual cost comparison
+        st.markdown("### 💰 Annual Cost Comparison Strategies")
+        st.markdown("*Compare rolling strategies: buying multiple short-term vs fewer long-term options*")
+        
+        annual_strategies = []
+        
+        for otm in otm_levels:
+            strike = latest_price * (1 - otm)
+            strategy_row = {'OTM %': f"{otm*100:.0f}%", 'Strike': f"${strike:.2f}"}
+            
+            # Strategy 1: Roll 3M options (buy 4 times per year)
+            price_3m = price_otm_put(latest_price, strike, 0.25, RISK_FREE_RATE, latest_vix)
+            strategy_row['4x 3M (Roll Quarterly)'] = f"${price_3m * 4:.2f}"
+            
+            # Strategy 2: Roll 6M options (buy 2 times per year)
+            price_6m = price_otm_put(latest_price, strike, 0.5, RISK_FREE_RATE, latest_vix)
+            strategy_row['2x 6M (Roll Semi-Annual)'] = f"${price_6m * 2:.2f}"
+            
+            # Strategy 3: Buy 12M once
+            price_12m = price_otm_put(latest_price, strike, 1.0, RISK_FREE_RATE, latest_vix)
+            strategy_row['1x 12M (Annual)'] = f"${price_12m:.2f}"
+            
+            # Calculate most economical
+            costs = [price_3m * 4, price_6m * 2, price_12m]
+            min_cost = min(costs)
+            strategies = ['Roll Quarterly', 'Roll Semi-Annual', 'Annual']
+            best = strategies[costs.index(min_cost)]
+            strategy_row['Most Economical'] = best
+            strategy_row['Savings vs Worst'] = f"${max(costs) - min_cost:.2f}"
+            
+            annual_strategies.append(strategy_row)
+        
+        annual_df = pd.DataFrame(annual_strategies)
+        st.table(annual_df)
+    
+    with tab2:
+        st.markdown("### Cost Efficiency Analysis")
+        
+        # Create cost per dollar of protection analysis
+        cost_efficiency = []
+        
+        for otm in otm_levels:
+            strike = latest_price * (1 - otm)
+            otm_label = f"{otm*100:.0f}%"
+            
+            for months in expiry_months:
+                days = months * 30
+                T = days / 365
+                put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
+                
+                # Max profit if SPY goes to 0
+                max_profit = strike
+                # Cost per dollar of max protection
+                cost_efficiency_ratio = put_price / max_profit
+                # Annualized cost
+                annual_cost = put_price * (12 / months)
+                
+                cost_efficiency.append({
+                    'OTM': otm_label,
+                    'Expiry': f'{months}M',
+                    'Strike': strike,
+                    'Put Price': put_price,
+                    'Max Profit': max_profit,
+                    'Cost per $1 Protection': cost_efficiency_ratio,
+                    'Annualized Cost': annual_cost
+                })
+        
+        efficiency_df = pd.DataFrame(cost_efficiency)
+        
+        # Show metrics
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### 🏆 Cheapest by Normalized Price (Price/Strike)")
-            cheapest_norm = matrix_df.nsmallest(5, 'Normalized_Price')[['OTM', 'Expiry', 'Normalized_Price', 'Price', 'Strike']].copy()
-            cheapest_norm['Normalized_Price'] = cheapest_norm['Normalized_Price'].apply(lambda x: f"{x:.4f}")
-            cheapest_norm['Price'] = cheapest_norm['Price'].apply(lambda x: f"${x:.2f}")
-            cheapest_norm['Strike'] = cheapest_norm['Strike'].apply(lambda x: f"${x:.2f}")
-            st.table(cheapest_norm)
-            st.caption("Lower is cheaper per dollar of strike protection")
+            st.markdown("#### Cheapest Options (by absolute price)")
+            cheapest = efficiency_df.nsmallest(5, 'Put Price')[['OTM', 'Expiry', 'Put Price', 'Strike']].copy()
+            cheapest['Put Price'] = cheapest['Put Price'].apply(lambda x: f"${x:.2f}")
+            cheapest['Strike'] = cheapest['Strike'].apply(lambda x: f"${x:.2f}")
+            st.table(cheapest)
         
         with col2:
-            st.markdown("#### 🎯 Best Convexity (Price×Gamma / Strike×|Theta|×Vega)")
-            best_convexity = matrix_df.nlargest(5, 'Convexity_Metric')[['OTM', 'Expiry', 'Convexity_Metric', 'Price', 'Gamma']].copy()
-            best_convexity['Convexity_Metric'] = best_convexity['Convexity_Metric'].apply(lambda x: f"{x:.6f}")
-            best_convexity['Price'] = best_convexity['Price'].apply(lambda x: f"${x:.2f}")
-            best_convexity['Gamma'] = best_convexity['Gamma'].apply(lambda x: f"{x:.4f}")
-            st.table(best_convexity)
-            st.caption("Higher is better - max convexity per unit of time decay & vega risk")
+            st.markdown("#### Most Efficient (cost per $1 protection)")
+            most_efficient = efficiency_df.nsmallest(5, 'Cost per $1 Protection')[['OTM', 'Expiry', 'Cost per $1 Protection', 'Put Price']].copy()
+            most_efficient['Cost per $1 Protection'] = most_efficient['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
+            most_efficient['Put Price'] = most_efficient['Put Price'].apply(lambda x: f"${x:.2f}")
+            st.table(most_efficient)
         
-        st.markdown("---")
-        st.markdown("### 🔥 Complete Greeks Analysis")
-        
-        # Full table with all metrics
-        display_matrix = matrix_df.copy()
-        display_matrix['Strike'] = display_matrix['Strike'].apply(lambda x: f"${x:.2f}")
-        display_matrix['Price'] = display_matrix['Price'].apply(lambda x: f"${x:.2f}")
-        display_matrix['Delta'] = display_matrix['Delta'].apply(lambda x: f"{x:.3f}")
-        display_matrix['Gamma'] = display_matrix['Gamma'].apply(lambda x: f"{x:.4f}")
-        display_matrix['Theta'] = display_matrix['Theta'].apply(lambda x: f"${x:.3f}")
-        display_matrix['Vega'] = display_matrix['Vega'].apply(lambda x: f"${x:.3f}")
-        display_matrix['Adj_IV'] = display_matrix['Adj_IV'].apply(lambda x: f"{x:.1f}%")
-        display_matrix['Normalized_Price'] = display_matrix['Normalized_Price'].apply(lambda x: f"{x:.4f}")
-        display_matrix['Convexity_Metric'] = display_matrix['Convexity_Metric'].apply(lambda x: f"{x:.6f}")
-        
-        st.table(display_matrix)
-        
-        st.markdown("---")
-        st.markdown("### 📊 Visual Heatmaps")
+        # Full table
+        st.markdown("#### Complete Efficiency Analysis")
+        display_eff = efficiency_df.copy()
+        display_eff['Strike'] = display_eff['Strike'].apply(lambda x: f"${x:.2f}")
+        display_eff['Put Price'] = display_eff['Put Price'].apply(lambda x: f"${x:.2f}")
+        display_eff['Max Profit'] = display_eff['Max Profit'].apply(lambda x: f"${x:.2f}")
+        display_eff['Cost per $1 Protection'] = display_eff['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
+        display_eff['Annualized Cost'] = display_eff['Annualized Cost'].apply(lambda x: f"${x:.2f}")
+        st.table(display_eff)
+    
+    with tab3:
+        st.markdown("### Visual Comparison Heatmaps")
         
         # Prepare data for heatmaps
-        norm_price_matrix = []
-        convexity_matrix = []
-        gamma_matrix = []
+        price_matrix = []
+        iv_matrix = []
+        annual_cost_matrix = []
         
         for otm in otm_levels:
-            norm_row = []
-            conv_row = []
-            gamma_row = []
+            price_row = []
+            iv_row = []
+            annual_row = []
+            strike = latest_price * (1 - otm)
             
             for months in expiry_months:
-                subset = matrix_df[(matrix_df['OTM'] == f"{otm*100:.0f}%") & (matrix_df['Expiry'] == f"{months}M")]
-                if len(subset) > 0:
-                    norm_row.append(subset.iloc[0]['Normalized_Price'])
-                    conv_row.append(subset.iloc[0]['Convexity_Metric'])
-                    gamma_row.append(subset.iloc[0]['Gamma'])
+                days = months * 30
+                T = days / 365
+                put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
+                adj_iv = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
+                annual_cost = put_price * (12 / months)
+                
+                price_row.append(put_price)
+                iv_row.append(adj_iv * 100)
+                annual_row.append(annual_cost)
             
-            norm_price_matrix.append(norm_row)
-            convexity_matrix.append(conv_row)
-            gamma_matrix.append(gamma_row)
+            price_matrix.append(price_row)
+            iv_matrix.append(iv_row)
+            annual_cost_matrix.append(annual_row)
         
+        # Create heatmaps
         otm_labels = [f"{int(otm*100)}% OTM" for otm in otm_levels]
         expiry_labels = [f"{m} Months" for m in expiry_months]
         
         fig_heat = make_subplots(
             rows=1, cols=3,
-            subplot_titles=('Normalized Price (Lower=Better)', 'Convexity Metric (Higher=Better)', 'Gamma (Higher=Better)'),
-            horizontal_spacing=0.12
+            subplot_titles=('Put Prices ($)', 'Adjusted IV (%)', 'Annualized Cost ($)'),
+            horizontal_spacing=0.15
         )
         
-        # Normalized Price heatmap (lower is better - use reversed colorscale)
+        # Price heatmap
         fig_heat.add_trace(
             go.Heatmap(
-                z=norm_price_matrix,
+                z=price_matrix,
                 x=expiry_labels,
                 y=otm_labels,
-                colorscale='RdYlGn_r',
-                text=[[f'{val:.4f}' for val in row] for row in norm_price_matrix],
+                colorscale='Greens',
+                text=[[f'${val:.2f}' for val in row] for row in price_matrix],
                 texttemplate='%{text}',
-                textfont={"size": 9},
+                textfont={"size": 10},
                 showscale=True,
-                colorbar=dict(x=0.30)
+                colorbar=dict(x=0.28)
             ),
             row=1, col=1
         )
         
-        # Convexity metric heatmap (higher is better)
+        # IV heatmap
         fig_heat.add_trace(
             go.Heatmap(
-                z=convexity_matrix,
+                z=iv_matrix,
                 x=expiry_labels,
                 y=otm_labels,
-                colorscale='RdYlGn',
-                text=[[f'{val:.5f}' for val in row] for row in convexity_matrix],
+                colorscale='Blues',
+                text=[[f'{val:.1f}%' for val in row] for row in iv_matrix],
                 texttemplate='%{text}',
-                textfont={"size": 9},
+                textfont={"size": 10},
                 showscale=True,
-                colorbar=dict(x=0.64)
+                colorbar=dict(x=0.63)
             ),
             row=1, col=2
         )
         
-        # Gamma heatmap (higher is better)
+        # Annual cost heatmap
         fig_heat.add_trace(
             go.Heatmap(
-                z=gamma_matrix,
+                z=annual_cost_matrix,
                 x=expiry_labels,
                 y=otm_labels,
-                colorscale='Blues',
-                text=[[f'{val:.4f}' for val in row] for row in gamma_matrix],
+                colorscale='Reds',
+                text=[[f'${val:.2f}' for val in row] for row in annual_cost_matrix],
                 texttemplate='%{text}',
-                textfont={"size": 9},
+                textfont={"size": 10},
                 showscale=True,
                 colorbar=dict(x=0.98)
             ),
@@ -633,8 +678,31 @@ if data is not None and len(data) > 0:
         
         fig_heat.update_layout(height=400)
         st.plotly_chart(fig_heat, use_container_width=True)
+        
+        # 3D surface plot
+        st.markdown("### 3D Price Surface")
+        
+        fig_3d = go.Figure(data=[go.Surface(
+            z=price_matrix,
+            x=expiry_months,
+            y=[otm*100 for otm in otm_levels],
+            colorscale='Viridis',
+            showscale=True
+        )])
+        
+        fig_3d.update_layout(
+            title='Put Option Prices: OTM % vs Expiry',
+            scene=dict(
+                xaxis_title='Months to Expiry',
+                yaxis_title='OTM %',
+                zaxis_title='Price ($)',
+            ),
+            height=600
+        )
+        
+        st.plotly_chart(fig_3d, use_container_width=True)
     
-    with tab2:
+    with tab4:
         st.markdown("### 💡 Strategy Recommendations")
         
         # Taleb/Universa style recommendation
@@ -645,20 +713,28 @@ if data is not None and len(data) > 0:
         - Cheaper upfront cost allows for more contracts
         - Massive asymmetric payoff during tail events
         - Accept high theta decay for extreme downside protection
-        - Focus on high Gamma (convexity) relative to Theta (decay)
         """)
         
-        # Find the best convexity options
-        deep_otm_options = matrix_df[matrix_df['OTM'].isin(['25%', '30%'])].nlargest(4, 'Convexity_Metric')
+        # Find the cheapest deep OTM option
+        deep_otm = [0.25, 0.30]
+        taleb_options = []
         
-        taleb_display = deep_otm_options[['OTM', 'Expiry', 'Strike', 'Price', 'Gamma', 'Theta', 'Convexity_Metric']].copy()
-        taleb_display['Strike'] = taleb_display['Strike'].apply(lambda x: f"${x:.2f}")
-        taleb_display['Price'] = taleb_display['Price'].apply(lambda x: f"${x:.2f}")
-        taleb_display['Gamma'] = taleb_display['Gamma'].apply(lambda x: f"{x:.4f}")
-        taleb_display['Theta'] = taleb_display['Theta'].apply(lambda x: f"${x:.3f}/day")
-        taleb_display['Convexity_Metric'] = taleb_display['Convexity_Metric'].apply(lambda x: f"{x:.6f}")
+        for otm in deep_otm:
+            strike = latest_price * (1 - otm)
+            for months in [3, 6]:
+                T = months * 30 / 365
+                put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
+                annual_cost = put_price * (12 / months)
+                
+                taleb_options.append({
+                    'OTM': f"{otm*100:.0f}%",
+                    'Expiry': f"{months}M",
+                    'Strike': f"${strike:.2f}",
+                    'Price': f"${put_price:.2f}",
+                    'Annual Cost (Rolling)': f"${annual_cost:.2f}"
+                })
         
-        st.table(taleb_display)
+        st.dataframe(pd.DataFrame(taleb_options), hide_index=True, use_container_width=True)
         
         # Balanced approach
         st.markdown("#### ⚖️ Balanced Approach")
@@ -670,22 +746,60 @@ if data is not None and len(data) > 0:
         - Good for typical portfolio hedging
         """)
         
-        balanced_options = matrix_df[(matrix_df['OTM'] == '20%') & (matrix_df['Expiry'].isin(['3M', '6M']))]
-        balanced_display = balanced_options[['OTM', 'Expiry', 'Strike', 'Price', 'Normalized_Price', 'Convexity_Metric']].copy()
-        balanced_display['Strike'] = balanced_display['Strike'].apply(lambda x: f"${x:.2f}")
-        balanced_display['Price'] = balanced_display['Price'].apply(lambda x: f"${x:.2f}")
-        balanced_display['Normalized_Price'] = balanced_display['Normalized_Price'].apply(lambda x: f"{x:.4f}")
-        balanced_display['Convexity_Metric'] = balanced_display['Convexity_Metric'].apply(lambda x: f"{x:.6f}")
+        # Cost comparison
+        st.markdown("#### 💵 Example: $800 Hedge Budget")
         
-        st.table(balanced_display)
+        budget = 800
+        
+        comparison = []
+        
+        # Strategy 1: Deep OTM, short dated
+        strike_30 = latest_price * 0.70
+        price_30_3m = price_otm_put(latest_price, strike_30, 0.25, RISK_FREE_RATE, latest_vix)
+        contracts_30 = budget / (price_30_3m * 100)
+        comparison.append({
+            'Strategy': '30% OTM, 3M (Taleb Style)',
+            'Strike': f"${strike_30:.2f}",
+            'Price per Contract': f"${price_30_3m:.2f}",
+            'Contracts Affordable': f"{contracts_30:.1f}",
+            'Total Notional': f"${strike_30 * contracts_30 * 100:,.0f}",
+            'Roll Frequency': '4x per year'
+        })
+        
+        # Strategy 2: Moderate OTM, medium dated
+        strike_20 = latest_price * 0.80
+        price_20_6m = price_otm_put(latest_price, strike_20, 0.5, RISK_FREE_RATE, latest_vix)
+        contracts_20 = budget / (price_20_6m * 100)
+        comparison.append({
+            'Strategy': '20% OTM, 6M (Balanced)',
+            'Strike': f"${strike_20:.2f}",
+            'Price per Contract': f"${price_20_6m:.2f}",
+            'Contracts Affordable': f"{contracts_20:.1f}",
+            'Total Notional': f"${strike_20 * contracts_20 * 100:,.0f}",
+            'Roll Frequency': '2x per year'
+        })
+        
+        # Strategy 3: Closer OTM, long dated
+        strike_15 = latest_price * 0.85
+        price_15_12m = price_otm_put(latest_price, strike_15, 1.0, RISK_FREE_RATE, latest_vix)
+        contracts_15 = budget / (price_15_12m * 100)
+        comparison.append({
+            'Strategy': '15% OTM, 12M (Conservative)',
+            'Strike': f"${strike_15:.2f}",
+            'Price per Contract': f"${price_15_12m:.2f}",
+            'Contracts Affordable': f"{contracts_15:.1f}",
+            'Total Notional': f"${strike_15 * contracts_15 * 100:,.0f}",
+            'Roll Frequency': '1x per year'
+        })
+        
+        st.table(pd.DataFrame(comparison))
         
         st.markdown("""
         **Key Insights:**
-        - **Normalized Price**: Lower values mean cheaper cost per dollar of strike protection
-        - **Convexity Metric**: Higher values indicate better asymmetric payoff (high gamma) relative to time decay (theta) and volatility risk (vega)
-        - **Gamma**: Measures convexity - how fast delta changes. Higher gamma = more explosive gains in crashes
-        - **Theta**: Daily time decay. Negative values show how much you lose per day
-        - **Vega**: Sensitivity to IV changes. Higher vega = more profit from volatility spikes
+        - **Deeper OTM** = More contracts for same budget, but further from current price
+        - **Shorter expiry** = Cheaper per contract, but more frequent rolling
+        - **Taleb's approach**: Maximize convexity with deep OTM, accept higher roll costs
+        - **Traditional approach**: Balance between cost, protection level, and roll frequency
         """)
     
     st.markdown("---")
@@ -756,12 +870,6 @@ st.markdown("""
 - **Sell**: Adjusted IV ≥ 60% (volatility spike)
 - **Strike**: 20% OTM
 - **Expiry**: 180 days
-
-### Greeks Explanation
-- **Delta**: Rate of change of option price with underlying price (-1 to 0 for puts)
-- **Gamma**: Rate of change of delta (convexity - higher = more explosive gains)
-- **Theta**: Daily time decay (cost per day of holding the option)
-- **Vega**: Sensitivity to 1% change in implied volatility
 
 *This is for educational purposes only. Not financial advice.*
 """)
