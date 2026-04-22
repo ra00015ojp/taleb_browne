@@ -218,21 +218,31 @@ def fetch_live_price(ticker):
         st.warning(f"Live price fetch failed for {ticker}: {e}")
         return None, None
 
-@st.cache_data(ttl=REFRESH_INTERVAL)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_market_data(start, end, asset):
     try:
         asset_hist = yf.Ticker(asset).history(start=(start), end=(end), interval="1d")
         vix_hist = yf.Ticker('^VIX').history(start=(start), end=(end), interval="1d")
 
+        if asset_hist.empty:
+            st.warning(f"No {asset} data - retrying...")
+            asset_hist = yf.download(asset, start=start, end=end)['Close']
+            
+        if vix_hist.empty:
+            st.warning("No VIX data - retrying...")
+            vix_hist = yf.download('^VIX', start=start, end=end)['Close']
+            
         if asset_hist.empty or vix_hist.empty:
-            st.error("No data returned. Market may be closed or ticker invalid.")
             return None
 
         asset_hist.index = asset_hist.index.normalize()
         vix_hist.index = vix_hist.index.normalize()
 
-        asset_series = asset_hist['Close'].squeeze()
-        vix_series = vix_hist['Close'].squeeze()
+        asset_series = asset_hist['Close'] if 'Close' in asset_hist
+        else asset_hist.squeeze()
+        
+        vix_series = vix_hist['Close'] if 'Close' in vix_hist
+        else vix_hist.squeeze()
 
         data = pd.DataFrame({asset: asset_series, 'VIX': vix_series})
         if data.empty:
