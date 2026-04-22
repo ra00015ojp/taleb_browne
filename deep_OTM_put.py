@@ -238,11 +238,8 @@ def fetch_market_data(start, end, asset):
         asset_hist.index = asset_hist.index.normalize()
         vix_hist.index = vix_hist.index.normalize()
 
-        asset_series = asset_hist['Close'] if 'Close' in asset_hist
-        else asset_hist.squeeze()
-        
-        vix_series = vix_hist['Close'] if 'Close' in vix_hist
-        else vix_hist.squeeze()
+        asset_series = asset_hist['Close'] if 'Close' in asset_hist else asset_hist.squeeze()
+        vix_series = vix_hist['Close'] if 'Close' in vix_hist else vix_hist.squeeze()
 
         data = pd.DataFrame({asset: asset_series, 'VIX': vix_series})
         if data.empty:
