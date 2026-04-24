@@ -84,7 +84,17 @@ if time_elapsed >= REFRESH_INTERVAL:
     st.session_state.last_refresh_time = time.time()
     st.rerun()
 
-# Black-Scholes for Put Option Pricing
+# Black-Scholes for Put Option Pricing & greeks
+def black_scholes_put(S, K, T, r, sigma):
+    if T <= 0:
+        return max(K - S, 0)
+    
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    
+    put_price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+    return put_price
+
 def black_scholes_greeks(S, K, T, r, sigma):    
     if T <= 0: 
         return 0, 0, 0, 0    
@@ -94,10 +104,9 @@ def black_scholes_greeks(S, K, T, r, sigma):    
     delta = -norm.cdf(-d1)    
     gamma = norm.pdf(d1)/(S*sigma*np.sqrt(T))    
     theta = (-S*norm.pdf(d1)*sigma/(2*np.sqrt(T)) - r*K*np.exp(-r*T)*norm.cdf(-d2))/365    
-    vega = S*norm.pdf(d1)*np.sqrt(T)/100    
-    put_price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+    vega = S*norm.pdf(d1)*np.sqrt(T)/100
     
-    return delta, gamma, theta, vega, put_price
+    return delta, gamma, theta, vega
 
 def get_skewed_implied_vol(S, K, vix, T):
     base_iv = vix / 100
