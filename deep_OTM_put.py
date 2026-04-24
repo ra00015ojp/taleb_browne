@@ -282,6 +282,7 @@ if data is not None and len(data) > 0:
     data['Adj_IV'] = adj_ivs
     data['Strike'] = strikes
     data['Put_Price'] = put_prices
+    data['Antifragile'] = antifragile_scores
     
     # Current market conditions
     live_price, live_time = fetch_live_price(asset_ticker)
@@ -493,119 +494,9 @@ if data is not None and len(data) > 0:
         matrix_data.append(row_data)
     
     # Create tabs for different views
-    tab1, tab2, tab3, tab4 = st.tabs(["💵 Price Matrix", "📊 Cost Analysis", "📈 Heatmaps", "💡 Recommendations"])
+    tab1, tab2 = st.tabs(["📈 Heatmaps", "💡 Recommendations"])
     
     with tab1:
-        st.markdown("### Option Prices by Strike and Expiry")
-        st.markdown("*Prices shown per contract (multiply by 100 for total cost)*")
-        
-        # Create price comparison table
-        price_df = pd.DataFrame(matrix_data)
-        price_display = price_df[['OTM %', '3M', '6M', '9M', '12M']].copy()
-        
-        # Format as currency
-        for col in ['3M', '6M', '9M', '12M']:
-            price_display[col] = price_display[col].apply(lambda x: f"${x:.2f}")
-        
-        st.table(price_display)
-        
-        # Annual cost comparison
-        st.markdown("### 💰 Annual Cost Comparison Strategies")
-        st.markdown("*Compare rolling strategies: buying multiple short-term vs fewer long-term options*")
-        
-        annual_strategies = []
-        
-        for otm in otm_levels:
-            strike = latest_price * (1 - otm)
-            strategy_row = {'OTM %': f"{otm*100:.0f}%", 'Strike': f"${strike:.2f}"}
-            
-            # Strategy 1: Roll 3M options (buy 4 times per year)
-            price_3m = price_otm_put(latest_price, strike, 0.25, RISK_FREE_RATE, latest_vix)
-            strategy_row['4x 3M (Roll Quarterly)'] = f"${price_3m * 4:.2f}"
-            
-            # Strategy 2: Roll 6M options (buy 2 times per year)
-            price_6m = price_otm_put(latest_price, strike, 0.5, RISK_FREE_RATE, latest_vix)
-            strategy_row['2x 6M (Roll Semi-Annual)'] = f"${price_6m * 2:.2f}"
-            
-            # Strategy 3: Buy 12M once
-            price_12m = price_otm_put(latest_price, strike, 1.0, RISK_FREE_RATE, latest_vix)
-            strategy_row['1x 12M (Annual)'] = f"${price_12m:.2f}"
-            
-            # Calculate most economical
-            costs = [price_3m * 4, price_6m * 2, price_12m]
-            min_cost = min(costs)
-            strategies = ['Roll Quarterly', 'Roll Semi-Annual', 'Annual']
-            best = strategies[costs.index(min_cost)]
-            strategy_row['Most Economical'] = best
-            strategy_row['Savings vs Worst'] = f"${max(costs) - min_cost:.2f}"
-            
-            annual_strategies.append(strategy_row)
-        
-        annual_df = pd.DataFrame(annual_strategies)
-        st.table(annual_df)
-    
-    with tab2:
-        st.markdown("### Cost Efficiency Analysis")
-        
-        # Create cost per dollar of protection analysis
-        cost_efficiency = []
-        
-        for otm in otm_levels:
-            strike = latest_price * (1 - otm)
-            otm_label = f"{otm*100:.0f}%"
-            
-            for months in expiry_months:
-                days = months * 30
-                T = days / 365
-                put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
-                
-                # Max profit if SPY goes to 0
-                max_profit = strike
-                # Cost per dollar of max protection
-                cost_efficiency_ratio = put_price / max_profit
-                # Annualized cost
-                annual_cost = put_price * (12 / months)
-                
-                cost_efficiency.append({
-                    'OTM': otm_label,
-                    'Expiry': f'{months}M',
-                    'Strike': strike,
-                    'Put Price': put_price,
-                    'Max Profit': max_profit,
-                    'Cost per $1 Protection': cost_efficiency_ratio,
-                    'Annualized Cost': annual_cost
-                })
-        
-        efficiency_df = pd.DataFrame(cost_efficiency)
-        
-        # Show metrics
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### Cheapest Options (by absolute price)")
-            cheapest = efficiency_df.nsmallest(5, 'Put Price')[['OTM', 'Expiry', 'Put Price', 'Strike']].copy()
-            cheapest['Put Price'] = cheapest['Put Price'].apply(lambda x: f"${x:.2f}")
-            cheapest['Strike'] = cheapest['Strike'].apply(lambda x: f"${x:.2f}")
-            st.table(cheapest)
-        
-        with col2:
-            st.markdown("#### Most Efficient (cost per $1 protection)")
-            most_efficient = efficiency_df.nsmallest(5, 'Cost per $1 Protection')[['OTM', 'Expiry', 'Cost per $1 Protection', 'Put Price']].copy()
-            most_efficient['Cost per $1 Protection'] = most_efficient['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
-            most_efficient['Put Price'] = most_efficient['Put Price'].apply(lambda x: f"${x:.2f}")
-            st.table(most_efficient)
-        
-        # Full table
-        st.markdown("#### Complete Efficiency Analysis")
-        display_eff = efficiency_df.copy()
-        display_eff['Strike'] = display_eff['Strike'].apply(lambda x: f"${x:.2f}")
-        display_eff['Put Price'] = display_eff['Put Price'].apply(lambda x: f"${x:.2f}")
-        display_eff['Max Profit'] = display_eff['Max Profit'].apply(lambda x: f"${x:.2f}")
-        display_eff['Cost per $1 Protection'] = display_eff['Cost per $1 Protection'].apply(lambda x: f"${x:.4f}")
-        display_eff['Annualized Cost'] = display_eff['Annualized Cost'].apply(lambda x: f"${x:.2f}")
-        st.table(display_eff)
-    
-    with tab3:
         st.markdown("### Visual Comparison Heatmaps")
         
         # Prepare data for heatmaps
@@ -718,7 +609,7 @@ if data is not None and len(data) > 0:
         
         st.plotly_chart(fig_3d, use_container_width=True)
     
-    with tab4:
+    with tab2:
         st.markdown("### 💡 Strategy Recommendations")
         
         # Taleb/Universa style recommendation
