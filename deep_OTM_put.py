@@ -276,7 +276,7 @@ if data is not None and len(data) > 0:
         strikes.append(strike)
         put_prices.append(put_price)
         adj_iv_val = get_skewed_implied_vol(S, strike, vix, TIME_TO_EXPIRY)
-        black_scholes_greeks(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, adj_iv_val)
+        delta, gamma, theta, vega = black_scholes_greeks(S, strike, TIME_TO_EXPIRY, RISK_FREE_RATE, adj_iv_val)
         antifragile = (gamma * abs(delta)) / (put_price * abs(theta) * vega) if (put_price * theta * vega) != 0 else 0
     
     data['Adj_IV'] = adj_ivs
