@@ -282,7 +282,7 @@ if data is not None and len(data) > 0:
     data['Adj_IV'] = adj_ivs
     data['Strike'] = strikes
     data['Put_Price'] = put_prices
-    data['Antifragile'] = antifragile_scores
+    data['Antifragile'] = antifragile
     
     # Current market conditions
     live_price, live_time = fetch_live_price(asset_ticker)
