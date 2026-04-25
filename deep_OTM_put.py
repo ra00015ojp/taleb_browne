@@ -551,7 +551,7 @@ if data is not None and len(data) > 0:
                 textfont={"size": 10},
                 showscale=True,
                 colorbar=dict(x=0.28)), row=1, col=1)
-            ),
+        ),
             row=1, col=1
         )
         
