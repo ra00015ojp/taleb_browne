@@ -649,7 +649,7 @@ if data is not None and len(data) > 0:
                     'Annual Cost (Rolling)': f"${annual_cost:.2f}"
                 })
         
-        st.plotly_chart(fig, width='stretch')
+        #st.plotly_chart(fig, width='stretch')
         
         # Balanced approach
         st.markdown("#### ⚖️ Balanced Approach")
