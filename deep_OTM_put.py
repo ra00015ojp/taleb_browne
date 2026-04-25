@@ -637,13 +637,13 @@ if data is not None and len(data) > 0:
                 put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
                 annual_cost = put_price * (12 / months)
                 # UNSURE INDENTING
+                adj_iv_val = get_skewed_implied_vol(latest_price, strike, T)
+                d, g, t, v = black_scholes_greeks(latest_price, strike, T, RISK_FREE_RATE, adj_iv_val)
+                af = (g * abs(d)) / (put_price * abs(t) * v) if (put_price * t * v) != 0 else 0
                 taleb_options.append({
                     'OTM': f"{otm*100:.0f}%",
                     'Expiry': f"{months}M",
                     'Strike': f"${strike:.2f}",
-                    adj_iv_val = get_skewed_implied_vol(latest_price, strike, T)
-                    d, g, t, v = black_scholes_greeks(latest_price, strike, T, RISK_FREE_RATE, adj_iv_val)
-                    af = (g * abs(d)) / (put_price * abs(t) * v) if (put_price * t * v) != 0 else 0
                     'Antifragile': f"{af:.4f}",
                     'Annual Cost (Rolling)': f"${annual_cost:.2f}"
                 })
