@@ -487,7 +487,9 @@ if data is not None and len(data) > 0:
             put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
             adj_iv = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
             
-            row_data[f'{months}M'] = put_price
+            adj_iv_val = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
+            d, g, t, v = black_scholes_greeks(latest_price, strike, T, RISK_FREE_RATE, adj_iv_val)
+            row_data[f'{months}M'] = (g * abs(d)) / (put_price * abs(t) * v) if (put_price * t * v) != 0 else 0
             row_data[f'{months}M_IV'] = adj_iv
             row_data[f'{months}M_Strike'] = strike
         
@@ -507,7 +509,7 @@ if data is not None and len(data) > 0:
         for otm in otm_levels:
             price_row = []
             iv_row = []
-            annual_row = []
+            antifragile_row = []
             strike = latest_price * (1 - otm)
             
             for months in expiry_months:
@@ -515,15 +517,17 @@ if data is not None and len(data) > 0:
                 T = days / 365
                 put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
                 adj_iv = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
-                annual_cost = put_price * (12 / months)
+                adj_iv_val = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
+                d, g, t, v = black_scholes_greeks(latest_price, strike, T, RISK_FREE_RATE, adj_iv_val)
+                antifragile_val = (g * abs(d)) / (put_price * abs(t) * v) if (put_price * t * v) != 0 else 0
                 
                 price_row.append(put_price)
                 iv_row.append(adj_iv * 100)
-                annual_row.append(annual_cost)
+                antifragile_row.append(antifragile_val)
             
             price_matrix.append(price_row)
             iv_matrix.append(iv_row)
-            annual_cost_matrix.append(annual_row)
+            annual_cost_matrix.append(antifragile_row)
         
         # Create heatmaps
         otm_labels = [f"{int(otm*100)}% OTM" for otm in otm_levels]
@@ -531,7 +535,7 @@ if data is not None and len(data) > 0:
         
         fig_heat = make_subplots(
             rows=1, cols=3,
-            subplot_titles=('Put Prices ($)', 'Adjusted IV (%)', 'Annualized Cost ($)'),
+            subplot_titles=('Antifragile Value', 'Adjusted IV (%)', 'Antifragile Heatmap'),
             horizontal_spacing=0.15
         )
         
@@ -542,7 +546,7 @@ if data is not None and len(data) > 0:
                 x=expiry_labels,
                 y=otm_labels,
                 colorscale='Greens',
-                text=[[f'${val:.2f}' for val in row] for row in price_matrix],
+                text=[[f'${val:.4f}' for val in row] for row in price_matrix],
                 texttemplate='%{text}',
                 textfont={"size": 10},
                 showscale=True,
@@ -574,7 +578,7 @@ if data is not None and len(data) > 0:
                 x=expiry_labels,
                 y=otm_labels,
                 colorscale='Reds',
-                text=[[f'${val:.2f}' for val in row] for row in annual_cost_matrix],
+                text=[[f'${val:.4f}' for val in row] for row in annual_cost_matrix],
                 texttemplate='%{text}',
                 textfont={"size": 10},
                 showscale=True,
@@ -602,7 +606,7 @@ if data is not None and len(data) > 0:
             scene=dict(
                 xaxis_title='Months to Expiry',
                 yaxis_title='OTM %',
-                zaxis_title='Price ($)',
+                zaxis_title='Antifragile Value',
             ),
             height=600
         )
@@ -632,12 +636,15 @@ if data is not None and len(data) > 0:
                 T = months * 30 / 365
                 put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
                 annual_cost = put_price * (12 / months)
-                
+                # UNSURE INDENTING
                 taleb_options.append({
                     'OTM': f"{otm*100:.0f}%",
                     'Expiry': f"{months}M",
                     'Strike': f"${strike:.2f}",
-                    'Price': f"${put_price:.2f}",
+                    adj_iv_val = get_skewed_implied_vol(latest_price, strike, T)
+                    d, g, t, v = black_scholes_greeks(latest_price, strike, T, RISK_FREE_RATE, adj_iv_val)
+                    af = (g * abs(d)) / (put_price * abs(t) * v) if (put_price * t * v) != 0 else 0
+                    'Antifragile': f"{af:.4f}",
                     'Annual Cost (Rolling)': f"${annual_cost:.2f}"
                 })
         
