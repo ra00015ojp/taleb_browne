@@ -228,7 +228,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Manual refresh button
-    if st.button("🔄 Force Refresh Data", use_container_width=True):
+    if st.button("🔄 Force Refresh Data", width='stretch'):
         st.cache_data.clear()
         st.session_state.last_refresh_time = time.time()
         st.rerun()
@@ -550,7 +550,7 @@ if data is not None and len(data) > 0:
                 texttemplate='%{text}',
                 textfont={"size": 10},
                 showscale=True,
-                colorbar=dict(x=0.28)
+                colorbar=dict(x=0.28)), row=1, col=1)
             ),
             row=1, col=1
         )
@@ -588,7 +588,7 @@ if data is not None and len(data) > 0:
         )
         
         fig_heat.update_layout(height=400)
-        st.plotly_chart(fig_heat, use_container_width=True)
+        st.plotly_chart(fig_heat, width='stretch')
         
         # 3D surface plot
         st.markdown("### 3D Price Surface")
@@ -611,7 +611,7 @@ if data is not None and len(data) > 0:
             height=600
         )
         
-        st.plotly_chart(fig_3d, use_container_width=True)
+        st.plotly_chart(fig_3d, width='stretch')
     
     with tab2:
         st.markdown("### 💡 Strategy Recommendations")
@@ -636,10 +636,10 @@ if data is not None and len(data) > 0:
                 T = months * 30 / 365
                 put_price = price_otm_put(latest_price, strike, T, RISK_FREE_RATE, latest_vix)
                 annual_cost = put_price * (12 / months)
-                # UNSURE INDENTING
-                adj_iv_val = get_skewed_implied_vol(latest_price, strike, T)
+                adj_iv_val = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
                 d, g, t, v = black_scholes_greeks(latest_price, strike, T, RISK_FREE_RATE, adj_iv_val)
                 af = (g * abs(d)) / (put_price * abs(t) * v) if (put_price * t * v) != 0 else 0
+                
                 taleb_options.append({
                     'OTM': f"{otm*100:.0f}%",
                     'Expiry': f"{months}M",
@@ -648,7 +648,7 @@ if data is not None and len(data) > 0:
                     'Annual Cost (Rolling)': f"${annual_cost:.2f}"
                 })
         
-        st.dataframe(pd.DataFrame(taleb_options), hide_index=True, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Balanced approach
         st.markdown("#### ⚖️ Balanced Approach")
