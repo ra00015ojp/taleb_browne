@@ -548,7 +548,7 @@ if data is not None and len(data) > 0:
                 x=expiry_labels,
                 y=otm_labels,
                 colorscale='Blues',
-                text=[[f'${val:.4f}' for val in row] for row in antifragile_matrix],
+                text=[[f'{val:.1f}' for val in row] for row in antifragile_matrix],
                 texttemplate='%{text}',
                 textfont={"size": 10},
                 showscale=True,
