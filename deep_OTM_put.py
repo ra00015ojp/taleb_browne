@@ -528,7 +528,7 @@ if data is not None and len(data) > 0:
             
             price_matrix.append(price_row)
             iv_matrix.append(iv_row)
-            antifragile_matrix.append(price_row).append(antifragile_row)
+            antifragile_matrix.append(antifragile_row)
             #price_matrix.append(price_row).append(antifragile_row)
         
         # Create heatmaps
