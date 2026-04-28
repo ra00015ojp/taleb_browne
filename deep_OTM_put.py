@@ -505,6 +505,7 @@ if data is not None and len(data) > 0:
         price_matrix = []
         iv_matrix = []
         annual_cost_matrix = []
+        antifragile_matrix = []
         
         for otm in otm_levels:
             price_row = []
@@ -519,7 +520,7 @@ if data is not None and len(data) > 0:
                 adj_iv = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
                 adj_iv_val = get_skewed_implied_vol(latest_price, strike, latest_vix, T)
                 d, g, t, v = black_scholes_greeks(latest_price, strike, T, RISK_FREE_RATE, adj_iv_val)
-                antifragile_val = (g * abs(d)) / (put_price * abs(t) * v) if (put_price * t * v) != 0 else 0
+                antifragile_val = (g * abs(d)) / (put_price * abs(t) * v)*1e6 if (put_price * t * v) != 0 else 0
                 
                 price_row.append(put_price)
                 iv_row.append(adj_iv * 100)
@@ -527,22 +528,23 @@ if data is not None and len(data) > 0:
             
             price_matrix.append(price_row)
             iv_matrix.append(iv_row)
-            annual_cost_matrix.append(antifragile_row)
+            antifragile_matrix.append(price_row).append(antifragile_row)
+            #price_matrix.append(price_row).append(antifragile_row)
         
         # Create heatmaps
         otm_labels = [f"{int(otm*100)}% OTM" for otm in otm_levels]
         expiry_labels = [f"{m} Months" for m in expiry_months]
         
         fig_heat = make_subplots(
-            rows=1, cols=3,
-            subplot_titles=('Antifragile Value', 'Adjusted IV (%)', 'Antifragile Heatmap'),
+            rows=1, cols=2,
+            subplot_titles=('Antifragile Value', 'Adjusted IV (%)'),
             horizontal_spacing=0.15
         )
         
-        # Price heatmap
+        # Antifragile Value heatmap
         fig_heat.add_trace(
             go.Heatmap(
-                z=price_matrix,
+                z=antifragile_matrix,
                 x=expiry_labels,
                 y=otm_labels,
                 colorscale='Greens',
@@ -572,22 +574,6 @@ if data is not None and len(data) > 0:
             row=1, col=2
         )
         
-        # Annual cost heatmap
-        fig_heat.add_trace(
-            go.Heatmap(
-                z=annual_cost_matrix,
-                x=expiry_labels,
-                y=otm_labels,
-                colorscale='Reds',
-                text=[[f'${val:.4f}' for val in row] for row in annual_cost_matrix],
-                texttemplate='%{text}',
-                textfont={"size": 10},
-                showscale=True,
-                colorbar=dict(x=0.98)
-            ),
-            row=1, col=3
-        )
-        
         fig_heat.update_layout(height=400)
         st.plotly_chart(fig_heat, width='stretch')
         
@@ -595,7 +581,7 @@ if data is not None and len(data) > 0:
         st.markdown("### 3D Price Surface")
         
         fig_3d = go.Figure(data=[go.Surface(
-            z=price_matrix,
+            z=antifragile_matrix,
             x=expiry_months,
             y=[otm*100 for otm in otm_levels],
             colorscale='Viridis',
